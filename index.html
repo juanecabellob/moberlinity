@@ -1,0 +1,355 @@
+<!DOCTYPE html>
+<!-- <html class="no-js" lang="en"  manifest="hotpi.manifest" > -->
+<html class="no-js" lang="en" >
+<head>
+  <meta charset="UTF-8">
+   <!-- Use minimum-scale=1 to enable GPU rasterization -->
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta
+    name="viewport"
+    content="width=device-width, initial-scale=1, user-scalable=0, maximum-scale=1, minimum-scale=1">
+  <title>Moberlinity</title>
+
+  
+   <style>
+    body { 
+      margin: 0;
+      padding: 0; 
+    }
+    path {
+      pointer-events: none
+    }
+
+    #app { 
+      position: absolute;
+      height: 100%;
+      top: 51;
+      bottom: 0;
+      width: 100%;
+    }    
+
+    .leaflet-container {
+      cursor: default;
+    }
+    .leaflet-marker-icon {
+      cursor: default;
+    }
+    .leaflet-marker-draggable:hover{
+      cursor: -webkit-grab;
+    }
+    .leaflet-marker-draggable:active{
+      cursor: -webkit-grabbing;
+    }
+   </style>
+
+</head>
+<body>
+<div id="app"></div>
+  
+<script src='https://npmcdn.com/@turf/turf/turf.min.js'></script>
+<script src='https://api.tiles.mapbox.com/mapbox.js/v2.0.1/mapbox.js'></script>
+<link href='https://api.tiles.mapbox.com/mapbox.js/v2.0.1/mapbox.css' rel='stylesheet' />
+<script src="https://ajax.googleapis.com/ajax/libs/jquery/2.1.3/jquery.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/lodash.js/4.17.4/lodash.js"></script>
+
+<link href='https://www.mapbox.com/base/latest/base.css' rel='stylesheet' />
+
+  <script> 
+  function Vehicle(location, status, battery) {
+    this.location = location;
+    this.status = status;
+    this.battery = battery;
+  }
+
+  function Citizen(location, destination) {
+    this.location = location;
+    this.destination = destination;
+  }
+
+  function Place(location) {
+    this.location = location;
+  }
+
+  function Ride(citizen, vehicle, finalLocation) {
+    this.citizen = citizen;
+    this.vehicle = vehicle;
+    this.initialLocation = initialLocation;
+    this.finalLocation = finalLocation;
+  }
+
+  let numberOfVehicles;
+  let numberOfCitizens;
+  let initialCoordenates;
+  let map;
+  let marker;
+  let currentRadius = 5; // kilometers
+  let bufferedPoints;
+  const vehicles = [];
+  const places = [];
+  const citizens = [];
+  const paths = [];
+  const colors = [ '#815da6', '#599ba9', '#54bd36', '#530101', '#add5c5', '#919b30', '#cd7d84', '#855c51', '#f011ed', '#b54a71', '#6294e3' ];
+  
+  (function createMap() {
+    L.mapbox.accessToken = 'pk.eyJ1IjoianVhbmVjYWJlbGxvYiIsImEiOiJjajRqdXI1bjEwbnZwMnFvNzlsZDN1MzliIn0.BRkacCy_B0Yvz-6nR8wYuQ';
+    map = L.mapbox.map('app', 'morganherlocker.kgidd73k').setView([51.505, -0.09], 13);
+    marker = L.marker(new L.LatLng(51.505, -0.09), {
+      icon: L.mapbox.marker.icon({
+          'marker-color': '#00704A',
+          'title': 'Entry point',
+          'marker-size': 'large',
+          'marker-symbol': 'marker-stroked'
+      }),
+      draggable: true,
+      zIndexOffset: 999
+    });
+    marker.addTo(map)
+    marker.on('drag', function() {
+      drawCircleArea()
+    });
+    drawCircleArea()
+    initialCoordenates = null;
+    map.on('click', onMapClick);
+  })();
+
+  //Geocoder lookup
+  var geocoder = L.mapbox.geocoder('mapbox.places-v1');
+  function getMarkerPoint() {
+    const position = marker.getLatLng();
+    const point = turf.point([ position.lng, position.lat ])
+    return point;
+  }
+
+  // creates a buffer of points in circle form
+  function pointBuffer(point, radius, resolution, units) {
+    let ring = []
+    let resMultiple = 360/resolution;
+    for (var i = 0; i < resolution; i++) {
+      const spoke = turf.destination(point, radius, i*resMultiple, units);
+      ring.push(spoke.geometry.coordinates);
+    }
+    if ((ring[0][0] !== ring[ring.length-1][0]) && (ring[0][1] != ring[ring.length-1][1])) {
+      ring.push([ring[0][0], ring[0][1]]);
+    }
+
+    return turf.polygon([ring]);
+  }
+
+  function drawCircleArea() {
+    const point = getMarkerPoint();
+
+    $('path').remove();
+    $('.leaflet-marker-pane *').not(':first').remove();
+    bufferedPoints = pointBuffer(point, currentRadius, 120, 'kilometers');
+    bufferedPoints.properties = {
+        'fill': 'blue',
+        'fill-opacity': 0.05,
+        'stroke': 'blue',
+        'stroke-width': 2,
+        'stroke-opacity': 0.7
+    };
+    const bufferLayer = L.mapbox.featureLayer().setGeoJSON(bufferedPoints).addTo(map);
+    console.log(bufferLayer.getGeoJSON())
+  }
+
+  function onMapClick(e) {
+    
+    initialCoordenates = [ e.latlng.lat, e.latlng.lng ];
+
+    marker.setLatLng(initialCoordenates);
+    map.setView(initialCoordenates, 13);
+    drawCircleArea();
+
+    numberOfVehicles = prompt('Please enter the number of vehicles', '30');
+    numberOfCitizens = prompt('Please enter the number of citizens', '10');
+    const vehicleMarkers = generateMarkers(numberOfVehicles, 'vehicles');
+    const citizenMarkers = generateMarkers(numberOfCitizens, 'citizens');
+    const placesMarkers = generateMarkers(Math.ceil(Math.random() * 100), 'places');
+    startSimulation();
+  }
+
+  $('.leaflet-marker-draggable').on('mousewheel',function(event){
+    let wheelDelta= event.originalEvent.wheelDeltaY;
+    if (currentRadius - wheelDelta * 0.001 >= 0.2 && currentRadius - wheelDelta * 0.001 <= 8) {
+      currentRadius = currentRadius - wheelDelta * 0.001;
+      drawCircleArea();
+    }
+
+    event.stopPropagation();
+    return false;
+  });
+
+ /* function getLocation() {
+    if (navigator.geolocation) {
+      navigator.geolocation.getCurrentPosition(showPosition);
+    }
+  }*/
+
+  function generateMarkers(number, type) {
+    let featureCollection = turf.random('point', number, {
+      bbox: turf.bbox(bufferedPoints)  
+    });
+    let j = 0;
+    insideCircle = turf.within(featureCollection, turf.featureCollection([bufferedPoints]));
+    while (insideCircle.features.length < number && j < 50) {
+      featureCollection = turf.random('point', number - insideCircle.features.length, {
+        bbox: turf.bbox(bufferedPoints)  
+      });
+      console.log(insideCircle, j)
+
+      insideCircle = turf.featureCollection([
+        ...insideCircle.features, 
+        ...turf.within(featureCollection, turf.featureCollection([bufferedPoints])).features
+      ]);
+
+      console.log(insideCircle, j)
+      j ++;
+    }
+    const featureCollectionInsideCircle = insideCircle;
+
+    turf.featureEach(featureCollectionInsideCircle, (currentFeature) => {
+      if (turf.inside(currentFeature, bufferedPoints)) {
+        switch (type) {
+        case 'vehicles':
+          currentFeature.properties['marker-color'] = '#ffe100'
+          currentFeature.properties['title'] = `Vehicle at [${currentFeature.geometry.coordinates[0]}, ${currentFeature.geometry.coordinates[1]}]`;
+          currentFeature.properties['marker-size'] = 'small';
+          currentFeature.properties['marker-symbol'] = 'car';
+          vehicles.push(new Vehicle(currentFeature, 'idle', 0))
+          break;
+        case 'citizens':
+          currentFeature.properties['marker-color'] = '#00ff11'
+          currentFeature.properties['title'] = `Citizen at [${currentFeature.geometry.coordinates[0]}, ${currentFeature.geometry.coordinates[1]}]`;
+          currentFeature.properties['marker-size'] = 'small';
+          currentFeature.properties['marker-symbol'] = 'pitch';
+          citizens.push(new Citizen(currentFeature, null))
+          break;
+        case 'places':
+          currentFeature.properties['marker-color'] = '#ff0000'
+          currentFeature.properties['title'] = `Place at [${currentFeature.geometry.coordinates[0]}, ${currentFeature.geometry.coordinates[1]}]`;
+          currentFeature.properties['marker-size'] = 'small';
+          places.push(new Place(currentFeature))
+          break;
+        default:
+          break;
+        }
+      }
+    })
+
+    let markers = L.mapbox.featureLayer().setGeoJSON(featureCollectionInsideCircle).addTo(map);
+    markers.on('mouseover', (e) => {
+        e.layer.openPopup();
+      })
+      .on('mouseout', (e) => {
+        e.layer.closePopup();
+      })
+  }
+
+  function simulateRide(citizen, place, iteration) {
+    // update destination
+    citizen.destination = place.location;
+    citizen.location.properties['title'] = `Citizen at [${citizen.location.geometry.coordinates[0]}, ${citizen.location.geometry.coordinates[1]}] with destination [${citizen.destination.geometry.coordinates[0]}, ${citizen.destination.geometry.coordinates[1]}]`
+    const vehicleLocations = vehicles.filter(vehicle => vehicle.status === 'idle').map(vehicle => vehicle.location);
+
+    if (vehicleLocations.length === 0) {
+      return false;
+    }
+
+    // find nearest vehicle
+    const nearestVehicleFeature = turf.nearest(citizen.location, turf.featureCollection(vehicleLocations))
+    const nearestVehicleObject = vehicles[vehicleLocations.indexOf(nearestVehicleFeature)];
+    
+    nearestVehicleObject.status = 'on-the-road'
+    // road from his place to vehicle
+    const citizenCoordinates = citizen.location.geometry.coordinates;
+    const vehicleCoordinates = nearestVehicleFeature.geometry.coordinates;
+    let startEnd = citizenCoordinates[0]+','+citizenCoordinates[1]+';'+vehicleCoordinates[0]+','+vehicleCoordinates[1];
+    const directionsCitizenVehicleAPI = 'https://api.tiles.mapbox.com/v4/directions/mapbox.walking/'+startEnd+'.json?access_token='+L.mapbox.accessToken;
+
+    $.get(directionsCitizenVehicleAPI, (data) => {
+      let coordsAB = data.routes[0].geometry.coordinates;
+      coordsAB.unshift(citizenCoordinates);
+      coordsAB.push(vehicleCoordinates);
+
+      let totalDuration = data.routes[0].duration;
+      const placeCoordinates = place.location.geometry.coordinates;
+      startEnd = vehicleCoordinates[0]+','+vehicleCoordinates[1]+';'+placeCoordinates[0]+','+placeCoordinates[1];
+      const directionsVehiclePlaceAPI = 'https://api.tiles.mapbox.com/v4/directions/mapbox.driving/'+startEnd+'.json?access_token='+L.mapbox.accessToken;
+      $.get(directionsVehiclePlaceAPI, (data) => {
+        let coordsBC = data.routes[0].geometry.coordinates;
+        coordsBC.unshift(...coordsAB);
+        coordsBC.push(placeCoordinates);
+
+        paths.push(turf.lineString(coordsBC, {
+          "name": `iteration ${iteration} path`,
+          "stroke": colors[iteration],
+          "stroke-width": 4,
+          "opacity":1
+        }));
+
+        L.mapbox.featureLayer().setGeoJSON(turf.featureCollection(paths)).addTo(map);
+
+        totalDuration = totalDuration + data.routes[0].duration;
+
+        setTimeout(() => {
+          console.log('>>>>>>> TRIP CONCLUDED')
+          console.log('======================')
+          console.log('Citizen moved from ', citizen.location, ' to ', citizen.destination);
+          console.log('Nearest vehicle founded at ', nearestVehicleObject.location);
+          console.log('======================')
+          rides.push(new Ride(_.cloneDeep(citizen), _.cloneDeep(nearestVehicleObject), _.cloneDeep(place)));
+          citizen.destination = null;
+          citizen.location = place.location;
+          nearestVehicleObject.location = place.location;
+          nearestVehicleObject.status = 'idle';
+        }, totalDuration * 1000);
+      });
+    });
+
+    return true;
+  }
+
+  function startSimulation() {
+    paths.length = 0;
+    let getRandomVehicleIndex = function () { 
+      return Math.floor(Math.random() * (vehicles.length))
+    };
+
+    let getRandomCitizenIndex = function () {
+      return Math.floor(Math.random() * (citizens.length))
+    };
+
+    let getRandomPlaceIndex = function () {
+      return Math.floor(Math.random() * (places.length))
+    };
+
+    for (var i = 0; i < 10; i++) {
+      let citizenIndex = getRandomCitizenIndex();
+      let citizen = citizens[citizenIndex];
+      console.log(citizen, citizenIndex);
+      let j = 0;
+      try {
+        while (citizen.destination !== null && j <= 20) {
+          citizenIndex = getRandomCitizenIndex();
+          citizen = citizens[citizenIndex];
+          j++;
+          console.log(citizen, citizenIndex);
+        }
+      } catch (err) {
+
+      }
+      simulateRide(citizens[citizenIndex], places[getRandomPlaceIndex()], i)
+    }
+    /*
+    setTimeout(() => {
+      $('path').css('stroke-dashoffset', 0)
+    }, 400);*/
+
+  }
+    // road vehicle to place
+    // setTimeout to update motorcycle status and citizen's destination
+// getLocation();
+
+  </script>
+</body>
+</html>

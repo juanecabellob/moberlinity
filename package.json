@@ -38,5 +38,9 @@
     "sinon": "^1.17.4",
     "vinyl-buffer": "^1.0.0",
     "vinyl-source-stream": "^1.1.0"
+  },
+  "dependencies": {
+    "leaflet": "1.1.0",
+    "redux": "^3.7.1"
   }
 }
