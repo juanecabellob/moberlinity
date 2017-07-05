@@ -19,15 +19,13 @@
     path {
       pointer-events: none
     }
-
     #app { 
       position: absolute;
       height: 100%;
       top: 51;
       bottom: 0;
       width: 100%;
-    }    
-
+    }
     .leaflet-container {
       cursor: default;
     }
@@ -40,21 +38,52 @@
     .leaflet-marker-draggable:active{
       cursor: -webkit-grabbing;
     }
+    .distance-icon {
+      border-radius: 10px;
+      background: #fff;
+      color: #1a25b9;
+      text-align: center;
+      font-size: 9px;
+      display: inline-block;
+      border: 2px solid #1a25b9;
+    }
+
+    .initializer {
+      height: 40px; 
+      width: 200px; 
+      position: fixed; 
+      background: #16c8ce;
+      text-transform: uppercase; 
+      color: white;
+      border-radius: 2px;
+      font-size: 16px;
+      border: 0px #12a3a5;
+      bottom: 0; 
+      right: 0; 
+      margin-bottom: 60px; 
+      margin-right: 60px; 
+      z-index: 1000
+     -webkit-box-shadow: 10px 7px 14px 6px rgba(87,83,87,0.87);
+      -moz-box-shadow: 10px 7px 14px 6px rgba(87,83,87,0.87);
+      box-shadow: 10px 7px 14px 6px rgba(87,83,87,0.87);
+    }
    </style>
 
 </head>
 <body>
 <div id="app"></div>
+<button onclick="run()" class="initializer"> Start simulation</button>
   
 <script src='https://npmcdn.com/@turf/turf/turf.min.js'></script>
 <script src='https://api.tiles.mapbox.com/mapbox.js/v2.0.1/mapbox.js'></script>
 <link href='https://api.tiles.mapbox.com/mapbox.js/v2.0.1/mapbox.css' rel='stylesheet' />
 <script src="https://ajax.googleapis.com/ajax/libs/jquery/2.1.3/jquery.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/lodash.js/4.17.4/lodash.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/moment.js/2.18.1/moment.min.js"></script>
 
 <link href='https://www.mapbox.com/base/latest/base.css' rel='stylesheet' />
 
-  <script> 
+<script> 
   function Vehicle(location, status, battery) {
     this.location = location;
     this.status = status;
@@ -81,19 +110,28 @@
   let numberOfCitizens;
   let initialCoordenates;
   let map;
-  let marker;
+  let centralMarker;
   let currentRadius = 5; // kilometers
   let bufferedPoints;
+  let onSimulation = false;
   const vehicles = [];
   const places = [];
   const citizens = [];
   const paths = [];
-  const colors = [ '#815da6', '#599ba9', '#54bd36', '#530101', '#add5c5', '#919b30', '#cd7d84', '#855c51', '#f011ed', '#b54a71', '#6294e3' ];
+  const rides = [];
+  const tripEndingNotification = [];
+  const pathColors = [ '#815da6', '#599ba9', '#54bd36', '#530101', '#add5c5', '#919b30', '#cd7d84', '#855c51', '#f011ed', '#b54a71', '#6294e3' ];
   
   (function createMap() {
     L.mapbox.accessToken = 'pk.eyJ1IjoianVhbmVjYWJlbGxvYiIsImEiOiJjajRqdXI1bjEwbnZwMnFvNzlsZDN1MzliIn0.BRkacCy_B0Yvz-6nR8wYuQ';
-    map = L.mapbox.map('app', 'morganherlocker.kgidd73k').setView([51.505, -0.09], 13);
-    marker = L.marker(new L.LatLng(51.505, -0.09), {
+    map = L.mapbox.map('app').setView([51.505, -0.09], 13);
+    L.tileLayer('https://api.tiles.mapbox.com/v4/{id}/{z}/{x}/{y}.png?access_token={accessToken}', {
+      attribution: 'Map data &copy; <a href="http://openstreetmap.org">OpenStreetMap</a> contributors, <a href="http://creativecommons.org/licenses/by-sa/2.0/">CC-BY-SA</a>, Imagery © <a href="http://mapbox.com">Mapbox</a>',
+      maxZoom: 18,
+      id: 'mapbox.streets',
+      accessToken: L.mapbox.accessToken
+    }).addTo(map);
+    centralMarker = L.marker(new L.LatLng(51.505, -0.09), {
       icon: L.mapbox.marker.icon({
           'marker-color': '#00704A',
           'title': 'Entry point',
@@ -103,19 +141,18 @@
       draggable: true,
       zIndexOffset: 999
     });
-    marker.addTo(map)
-    marker.on('drag', function() {
-      drawCircleArea()
-    });
-    drawCircleArea()
-    initialCoordenates = null;
+    centralMarker.on('drag', () => {
+      drawCircleArea();
+    })
+    centralMarker.addTo(map);
+
     map.on('click', onMapClick);
   })();
 
   //Geocoder lookup
   var geocoder = L.mapbox.geocoder('mapbox.places-v1');
   function getMarkerPoint() {
-    const position = marker.getLatLng();
+    const position = centralMarker.getLatLng();
     const point = turf.point([ position.lng, position.lat ])
     return point;
   }
@@ -135,11 +172,23 @@
     return turf.polygon([ring]);
   }
 
+  function resetMap() {
+    clearAllTimeouts();
+    onSimulation = false;
+    map.eachLayer((layer) => {
+      console.log(layer)
+      if (!_.has(layer, 'url') && (_.has(layer, 'getLatLng') && layer.getLatLng() !== centralMarker.getLatLng())) {
+        map.removeLayer(layer);        
+      }
+    });
+    paths.length = 0;
+  }
+
   function drawCircleArea() {
     const point = getMarkerPoint();
-
     $('path').remove();
     $('.leaflet-marker-pane *').not(':first').remove();
+
     bufferedPoints = pointBuffer(point, currentRadius, 120, 'kilometers');
     bufferedPoints.properties = {
         'fill': 'blue',
@@ -149,23 +198,28 @@
         'stroke-opacity': 0.7
     };
     const bufferLayer = L.mapbox.featureLayer().setGeoJSON(bufferedPoints).addTo(map);
-    console.log(bufferLayer.getGeoJSON())
   }
 
-  function onMapClick(e) {
-    
-    initialCoordenates = [ e.latlng.lat, e.latlng.lng ];
+  function run() {
+    resetMap();
+    prepareSimulation();
+    startSimulation();
+  }
 
-    marker.setLatLng(initialCoordenates);
+  function onMapClick(e) {    
+    initialCoordenates = [ e.latlng.lat, e.latlng.lng ];
+    centralMarker.setLatLng(initialCoordenates);
     map.setView(initialCoordenates, 13);
     drawCircleArea();
+  }
 
+  function prepareSimulation() {
     numberOfVehicles = prompt('Please enter the number of vehicles', '30');
     numberOfCitizens = prompt('Please enter the number of citizens', '10');
-    const vehicleMarkers = generateMarkers(numberOfVehicles, 'vehicles');
-    const citizenMarkers = generateMarkers(numberOfCitizens, 'citizens');
-    const placesMarkers = generateMarkers(Math.ceil(Math.random() * 100), 'places');
-    startSimulation();
+    generateMarkers(numberOfVehicles, 'vehicles');
+    generateMarkers(numberOfCitizens, 'citizens');
+    generateMarkers(Math.ceil(Math.random() * (100 - 50)) + 50, 'places');
+    onSimulation = true;
   }
 
   $('.leaflet-marker-draggable').on('mousewheel',function(event){
@@ -236,8 +290,8 @@
       }
     })
 
-    let markers = L.mapbox.featureLayer().setGeoJSON(featureCollectionInsideCircle).addTo(map);
-    markers.on('mouseover', (e) => {
+    let simulationMarkers = L.mapbox.featureLayer().setGeoJSON(featureCollectionInsideCircle).addTo(map);
+    simulationMarkers.on('mouseover', (e) => {
         e.layer.openPopup();
       })
       .on('mouseout', (e) => {
@@ -247,8 +301,8 @@
 
   function simulateRide(citizen, place, iteration) {
     // update destination
-    citizen.destination = place.location;
-    citizen.location.properties['title'] = `Citizen at [${citizen.location.geometry.coordinates[0]}, ${citizen.location.geometry.coordinates[1]}] with destination [${citizen.destination.geometry.coordinates[0]}, ${citizen.destination.geometry.coordinates[1]}]`
+    citizen.destination = _.cloneDeep(place.location);
+    // citizen.location.properties['title'] = `Citizen at [${citizen.location.geometry.coordinates[0]}, ${citizen.location.geometry.coordinates[1]}] with destination [${citizen.destination.geometry.coordinates[0]}, ${citizen.destination.geometry.coordinates[1]}]`
     const vehicleLocations = vehicles.filter(vehicle => vehicle.status === 'idle').map(vehicle => vehicle.location);
 
     if (vehicleLocations.length === 0) {
@@ -259,7 +313,7 @@
     const nearestVehicleFeature = turf.nearest(citizen.location, turf.featureCollection(vehicleLocations))
     const nearestVehicleObject = vehicles[vehicleLocations.indexOf(nearestVehicleFeature)];
     
-    nearestVehicleObject.status = 'on-the-road'
+    nearestVehicleObject.status = 'on-the-road';
     // road from his place to vehicle
     const citizenCoordinates = citizen.location.geometry.coordinates;
     const vehicleCoordinates = nearestVehicleFeature.geometry.coordinates;
@@ -280,18 +334,36 @@
         coordsBC.unshift(...coordsAB);
         coordsBC.push(placeCoordinates);
 
+
+
+        totalDuration = totalDuration + data.routes[0].duration;
         paths.push(turf.lineString(coordsBC, {
           "name": `iteration ${iteration} path`,
-          "stroke": colors[iteration],
+          "duration": totalDuration, 
+          "stroke": pathColors[iteration],
           "stroke-width": 4,
           "opacity":1
         }));
+        L.mapbox.featureLayer()
+          .setGeoJSON(turf.featureCollection(paths))
+          .on('mouseover', (e) => {
+            e.layer.openPopup();
+          })
+          .on('mouseleave', (e) => {
+            e.layer.closePopup();
+          })
+          .addTo(map);
 
-        L.mapbox.featureLayer().setGeoJSON(turf.featureCollection(paths)).addTo(map);
-
-        totalDuration = totalDuration + data.routes[0].duration;
-
-        setTimeout(() => {
+        let totalDurationParsed = moment.duration(totalDuration, 'seconds').humanize()
+        
+        L.marker([coordsBC[parseInt(coordsBC.length*0.5)][1],coordsBC[parseInt(coordsBC.length*0.5)][0]],{
+          icon: L.divIcon({
+              className: 'distance-icon',
+              html: `<strong style="color: ${pathColors[iteration]}">${totalDurationParsed}</strong>`,
+              iconSize: [60, 23]
+          })})
+          .addTo(map);
+        tripEndingNotification.push(setTimeout(() => {
           console.log('>>>>>>> TRIP CONCLUDED')
           console.log('======================')
           console.log('Citizen moved from ', citizen.location, ' to ', citizen.destination);
@@ -302,15 +374,24 @@
           citizen.location = place.location;
           nearestVehicleObject.location = place.location;
           nearestVehicleObject.status = 'idle';
-        }, totalDuration * 1000);
+        }, totalDuration * 1000));
       });
     });
 
     return true;
   }
 
+  function clearAllTimeouts() {
+    if (tripEndingNotification.length === 0) {
+      return;
+    }
+
+    tripEndingNotification.map(timeout => clearTimeout(timeout))
+    console.log('>>>> All timeouts have been cleared');
+    tripEndingNotification.length = 0;
+  }
+
   function startSimulation() {
-    paths.length = 0;
     let getRandomVehicleIndex = function () { 
       return Math.floor(Math.random() * (vehicles.length))
     };
@@ -340,15 +421,7 @@
       }
       simulateRide(citizens[citizenIndex], places[getRandomPlaceIndex()], i)
     }
-    /*
-    setTimeout(() => {
-      $('path').css('stroke-dashoffset', 0)
-    }, 400);*/
-
   }
-    // road vehicle to place
-    // setTimeout to update motorcycle status and citizen's destination
-// getLocation();
 
   </script>
 </body>
