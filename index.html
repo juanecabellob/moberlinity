@@ -99,20 +99,32 @@
     this.location = location;
   }
 
-  function Ride(citizen, vehicle, finalLocation) {
+  function Ride(simulationId, citizen, vehicle, finalLocation, duration) {
     this.citizen = citizen;
     this.vehicle = vehicle;
-    this.initialLocation = initialLocation;
     this.finalLocation = finalLocation;
+    this.duration = duration;
+    this.simulationId = simulationId;
   }
 
   let numberOfVehicles;
   let numberOfCitizens;
   let initialCoordenates;
   let map;
-  let centralMarker;
   let currentRadius = 5; // kilometers
   let bufferedPoints;
+  let longestTime = 0;
+  let lastTripNotification;
+  let circleArea;
+  let tileLayer;
+  const layers = {
+    tile: null,
+    centralMarker: null,
+    circleArea: null,
+    simulationPaths: [],
+    simulationMarkers: [],
+    ridesDuration: []
+  }
   let onSimulation = false;
   const vehicles = [];
   const places = [];
@@ -125,13 +137,14 @@
   (function createMap() {
     L.mapbox.accessToken = 'pk.eyJ1IjoianVhbmVjYWJlbGxvYiIsImEiOiJjajRqdXI1bjEwbnZwMnFvNzlsZDN1MzliIn0.BRkacCy_B0Yvz-6nR8wYuQ';
     map = L.mapbox.map('app').setView([51.505, -0.09], 13);
-    L.tileLayer('https://api.tiles.mapbox.com/v4/{id}/{z}/{x}/{y}.png?access_token={accessToken}', {
+    layers.tile = L.tileLayer('https://api.tiles.mapbox.com/v4/{id}/{z}/{x}/{y}.png?access_token={accessToken}', {
       attribution: 'Map data &copy; <a href="http://openstreetmap.org">OpenStreetMap</a> contributors, <a href="http://creativecommons.org/licenses/by-sa/2.0/">CC-BY-SA</a>, Imagery © <a href="http://mapbox.com">Mapbox</a>',
       maxZoom: 18,
       id: 'mapbox.streets',
       accessToken: L.mapbox.accessToken
-    }).addTo(map);
-    centralMarker = L.marker(new L.LatLng(51.505, -0.09), {
+    });
+    map.addLayer(layers.tile);
+    layers.centralMarker = L.marker(new L.LatLng(51.505, -0.09), {
       icon: L.mapbox.marker.icon({
           'marker-color': '#00704A',
           'title': 'Entry point',
@@ -141,18 +154,18 @@
       draggable: true,
       zIndexOffset: 999
     });
-    centralMarker.on('drag', () => {
+    layers.centralMarker.on('drag', () => {
       drawCircleArea();
     })
-    centralMarker.addTo(map);
-
+    map.addLayer(layers.centralMarker);
     map.on('click', onMapClick);
+    drawCircleArea();
   })();
 
   //Geocoder lookup
   var geocoder = L.mapbox.geocoder('mapbox.places-v1');
   function getMarkerPoint() {
-    const position = centralMarker.getLatLng();
+    const position = layers.centralMarker.getLatLng();
     const point = turf.point([ position.lng, position.lat ])
     return point;
   }
@@ -173,21 +186,37 @@
   }
 
   function resetMap() {
+    layers.simulationMarkers.forEach((layer) => {
+      layer.clearLayers();
+    });
+
+    layers.simulationPaths.forEach((layer) => {
+      layer.clearLayers();
+    });
+
+    layers.ridesDuration.forEach((layer) => {
+      map.removeLayer(layer);
+    });
+
     clearAllTimeouts();
     onSimulation = false;
-    map.eachLayer((layer) => {
-      console.log(layer)
-      if (!_.has(layer, 'url') && (_.has(layer, 'getLatLng') && layer.getLatLng() !== centralMarker.getLatLng())) {
-        map.removeLayer(layer);        
-      }
-    });
+    
+    vehicles.length = 0;
+    places.length = 0;
+    citizens.length = 0;
+    paths.length = 0;
+    rides.length = 0;
+    layers.simulationPaths.length = 0;
+    layers.simulationMarkers.length = 0;
+    layers.ridesDuration.length = 0;
     paths.length = 0;
   }
 
   function drawCircleArea() {
     const point = getMarkerPoint();
-    $('path').remove();
-    $('.leaflet-marker-pane *').not(':first').remove();
+    if (layers.circleArea !== null) {
+      map.removeLayer(layers.circleArea);
+    } 
 
     bufferedPoints = pointBuffer(point, currentRadius, 120, 'kilometers');
     bufferedPoints.properties = {
@@ -197,7 +226,8 @@
         'stroke-width': 2,
         'stroke-opacity': 0.7
     };
-    const bufferLayer = L.mapbox.featureLayer().setGeoJSON(bufferedPoints).addTo(map);
+    layers.circleArea = L.mapbox.featureLayer().setGeoJSON(bufferedPoints);
+    map.addLayer(layers.circleArea);
   }
 
   function run() {
@@ -208,7 +238,7 @@
 
   function onMapClick(e) {    
     initialCoordenates = [ e.latlng.lat, e.latlng.lng ];
-    centralMarker.setLatLng(initialCoordenates);
+    layers.centralMarker.setLatLng(initialCoordenates);
     map.setView(initialCoordenates, 13);
     drawCircleArea();
   }
@@ -224,7 +254,7 @@
 
   $('.leaflet-marker-draggable').on('mousewheel',function(event){
     let wheelDelta= event.originalEvent.wheelDeltaY;
-    if (currentRadius - wheelDelta * 0.001 >= 0.2 && currentRadius - wheelDelta * 0.001 <= 8) {
+    if (currentRadius - wheelDelta * 0.001 >= 0.2 && currentRadius - wheelDelta * 0.001 <= 8 && !onSimulation) {
       currentRadius = currentRadius - wheelDelta * 0.001;
       drawCircleArea();
     }
@@ -232,12 +262,6 @@
     event.stopPropagation();
     return false;
   });
-
- /* function getLocation() {
-    if (navigator.geolocation) {
-      navigator.geolocation.getCurrentPosition(showPosition);
-    }
-  }*/
 
   function generateMarkers(number, type) {
     let featureCollection = turf.random('point', number, {
@@ -249,14 +273,12 @@
       featureCollection = turf.random('point', number - insideCircle.features.length, {
         bbox: turf.bbox(bufferedPoints)  
       });
-      console.log(insideCircle, j)
 
       insideCircle = turf.featureCollection([
         ...insideCircle.features, 
         ...turf.within(featureCollection, turf.featureCollection([bufferedPoints])).features
       ]);
 
-      console.log(insideCircle, j)
       j ++;
     }
     const featureCollectionInsideCircle = insideCircle;
@@ -290,13 +312,14 @@
       }
     })
 
-    let simulationMarkers = L.mapbox.featureLayer().setGeoJSON(featureCollectionInsideCircle).addTo(map);
-    simulationMarkers.on('mouseover', (e) => {
+    layers.simulationMarkers.push(L.mapbox.featureLayer().setGeoJSON(featureCollectionInsideCircle));
+    layers.simulationMarkers[layers.simulationMarkers.length - 1].on('mouseover', (e) => {
         e.layer.openPopup();
       })
       .on('mouseout', (e) => {
         e.layer.closePopup();
       })
+    map.addLayer(layers.simulationMarkers[layers.simulationMarkers.length - 1]);
   }
 
   function simulateRide(citizen, place, iteration) {
@@ -337,6 +360,18 @@
 
 
         totalDuration = totalDuration + data.routes[0].duration;
+        if (totalDuration > longestTime) {
+          longestTime = totalDuration;
+          if (typeof lastTripNotification !== 'undefined') {
+            clearTimeout(lastTripNotification)
+          }
+
+          lastTripNotification = setTimeout(() => {
+            onSimulation = false;
+            console.log(">>>>>>> SIMULATION ENDED");
+          }, longestTime);
+        }
+
         paths.push(turf.lineString(coordsBC, {
           "name": `iteration ${iteration} path`,
           "duration": totalDuration, 
@@ -344,37 +379,42 @@
           "stroke-width": 4,
           "opacity":1
         }));
-        L.mapbox.featureLayer()
+        layers.simulationPaths.push(L.mapbox.featureLayer()
           .setGeoJSON(turf.featureCollection(paths))
           .on('mouseover', (e) => {
             e.layer.openPopup();
           })
           .on('mouseleave', (e) => {
             e.layer.closePopup();
-          })
-          .addTo(map);
+          }))
+
+        map.addLayer(layers.simulationPaths[layers.simulationPaths.length - 1]);
 
         let totalDurationParsed = moment.duration(totalDuration, 'seconds').humanize()
         
-        L.marker([coordsBC[parseInt(coordsBC.length*0.5)][1],coordsBC[parseInt(coordsBC.length*0.5)][0]],{
-          icon: L.divIcon({
+        layers.ridesDuration.push(L.marker([ coordsBC[ parseInt(coordsBC.length * 0.5)][1],
+          coordsBC[ parseInt(coordsBC.length * 0.5) ][0] ], {
+            icon: L.divIcon({
               className: 'distance-icon',
               html: `<strong style="color: ${pathColors[iteration]}">${totalDurationParsed}</strong>`,
               iconSize: [60, 23]
-          })})
-          .addTo(map);
+            })
+          })
+        )
+        map.addLayer(layers.ridesDuration[layers.ridesDuration.length - 1]);
         tripEndingNotification.push(setTimeout(() => {
           console.log('>>>>>>> TRIP CONCLUDED')
           console.log('======================')
           console.log('Citizen moved from ', citizen.location, ' to ', citizen.destination);
           console.log('Nearest vehicle founded at ', nearestVehicleObject.location);
           console.log('======================')
-          rides.push(new Ride(_.cloneDeep(citizen), _.cloneDeep(nearestVehicleObject), _.cloneDeep(place)));
+          rides.push(new Ride('something', _.cloneDeep(citizen), _.cloneDeep(nearestVehicleObject), _.cloneDeep(place), totalDuration));
           citizen.destination = null;
           citizen.location = place.location;
           nearestVehicleObject.location = place.location;
           nearestVehicleObject.status = 'idle';
-        }, totalDuration * 1000));
+        }, totalDuration)); // to speed up everything instead of converting seconds to miliseconds
+
       });
     });
 
