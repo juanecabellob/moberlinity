@@ -85,21 +85,26 @@
 
 <script> 
   function Vehicle(location, status, battery) {
+    this.id = getUID();
     this.location = location;
     this.status = status;
     this.battery = battery;
   }
 
-  function Citizen(location, destination) {
+  function Citizen(location, destination, vehicle) {
+    this.id = getUID();
+    this.vehicle = vehicle;
     this.location = location;
     this.destination = destination;
   }
 
   function Place(location) {
+    this.id = getUID();
     this.location = location;
   }
 
   function Ride(simulationId, citizen, vehicle, finalLocation, duration) {
+    this.id = getUID();
     this.citizen = citizen;
     this.vehicle = vehicle;
     this.finalLocation = finalLocation;
@@ -107,6 +112,12 @@
     this.simulationId = simulationId;
   }
 
+  function Simulation(rides) {
+    this.id = getUID();
+    this.rides = rides;
+  }
+
+  let maxSpeed = 45
   let numberOfVehicles;
   let numberOfCitizens;
   let initialCoordenates;
@@ -117,6 +128,7 @@
   let lastTripNotification;
   let circleArea;
   let tileLayer;
+  let currentSimulation;
   const layers = {
     tile: null,
     centralMarker: null,
@@ -133,6 +145,10 @@
   const rides = [];
   const tripEndingNotification = [];
   const pathColors = [ '#815da6', '#599ba9', '#54bd36', '#530101', '#add5c5', '#919b30', '#cd7d84', '#855c51', '#f011ed', '#b54a71', '#6294e3' ];
+
+  function getUID() {
+    return Math.random().toString(36).substring(2) + (new Date()).getTime().toString(36);
+  }
   
   (function createMap() {
     L.mapbox.accessToken = 'pk.eyJ1IjoianVhbmVjYWJlbGxvYiIsImEiOiJjajRqdXI1bjEwbnZwMnFvNzlsZDN1MzliIn0.BRkacCy_B0Yvz-6nR8wYuQ';
@@ -162,8 +178,6 @@
     drawCircleArea();
   })();
 
-  //Geocoder lookup
-  var geocoder = L.mapbox.geocoder('mapbox.places-v1');
   function getMarkerPoint() {
     const position = layers.centralMarker.getLatLng();
     const point = turf.point([ position.lng, position.lat ])
@@ -263,12 +277,54 @@
     return false;
   });
 
+  function updateSimulationMarkersProperties(featureCollection, type) {
+    turf.featureEach(featureCollection, (currentFeature) => {
+      switch (type) {
+      case 'vehicles':
+        currentFeature.properties['marker-color'] = '#ffe100'
+        currentFeature.properties['title'] = `Vehicle at [${currentFeature.geometry.coordinates[0]}, ${currentFeature.geometry.coordinates[1]}]`;
+        currentFeature.properties['marker-size'] = 'small';
+        currentFeature.properties['marker-symbol'] = 'car';
+        vehicles.push(new Vehicle(currentFeature, 'idle', 0));
+        currentFeature.properties['id'] = vehicles[vehicles.length - 1].id;
+
+        break;
+      case 'citizens':
+        currentFeature.properties['marker-color'] = '#00ff11'
+        currentFeature.properties['title'] = `Citizen at [${currentFeature.geometry.coordinates[0]}, ${currentFeature.geometry.coordinates[1]}]`;
+        currentFeature.properties['marker-size'] = 'small';
+        currentFeature.properties['marker-symbol'] = 'pitch';
+        citizens.push(new Citizen(currentFeature, null, null))
+        currentFeature.properties['id'] = citizens[citizens.length - 1].id;
+        break;
+      case 'places':
+        currentFeature.properties['marker-color'] = '#ff0000'
+        currentFeature.properties['title'] = `Place at [${currentFeature.geometry.coordinates[0]}, ${currentFeature.geometry.coordinates[1]}]`;
+        currentFeature.properties['marker-size'] = 'small';
+        places.push(new Place(currentFeature));
+        currentFeature.properties['id'] = places[places.length - 1].id;
+        break;
+      default:
+        break;
+      }
+    });
+
+    layers.simulationMarkers.push(L.mapbox.featureLayer().setGeoJSON(featureCollection));
+    layers.simulationMarkers[layers.simulationMarkers.length - 1].on('mouseover', (e) => {
+        e.layer.openPopup();
+      })
+      .on('mouseout', (e) => {
+        e.layer.closePopup();
+      });
+    map.addLayer(layers.simulationMarkers[layers.simulationMarkers.length - 1]);
+  }
+
   function generateMarkers(number, type) {
     let featureCollection = turf.random('point', number, {
       bbox: turf.bbox(bufferedPoints)  
     });
     let j = 0;
-    insideCircle = turf.within(featureCollection, turf.featureCollection([bufferedPoints]));
+    let insideCircle = turf.within(featureCollection, turf.featureCollection([bufferedPoints]));
     while (insideCircle.features.length < number && j < 50) {
       featureCollection = turf.random('point', number - insideCircle.features.length, {
         bbox: turf.bbox(bufferedPoints)  
@@ -279,69 +335,33 @@
         ...turf.within(featureCollection, turf.featureCollection([bufferedPoints])).features
       ]);
 
-      j ++;
+      j = j + 1;
     }
-    const featureCollectionInsideCircle = insideCircle;
-
-    turf.featureEach(featureCollectionInsideCircle, (currentFeature) => {
-      if (turf.inside(currentFeature, bufferedPoints)) {
-        switch (type) {
-        case 'vehicles':
-          currentFeature.properties['marker-color'] = '#ffe100'
-          currentFeature.properties['title'] = `Vehicle at [${currentFeature.geometry.coordinates[0]}, ${currentFeature.geometry.coordinates[1]}]`;
-          currentFeature.properties['marker-size'] = 'small';
-          currentFeature.properties['marker-symbol'] = 'car';
-          vehicles.push(new Vehicle(currentFeature, 'idle', 0))
-          break;
-        case 'citizens':
-          currentFeature.properties['marker-color'] = '#00ff11'
-          currentFeature.properties['title'] = `Citizen at [${currentFeature.geometry.coordinates[0]}, ${currentFeature.geometry.coordinates[1]}]`;
-          currentFeature.properties['marker-size'] = 'small';
-          currentFeature.properties['marker-symbol'] = 'pitch';
-          citizens.push(new Citizen(currentFeature, null))
-          break;
-        case 'places':
-          currentFeature.properties['marker-color'] = '#ff0000'
-          currentFeature.properties['title'] = `Place at [${currentFeature.geometry.coordinates[0]}, ${currentFeature.geometry.coordinates[1]}]`;
-          currentFeature.properties['marker-size'] = 'small';
-          places.push(new Place(currentFeature))
-          break;
-        default:
-          break;
-        }
-      }
-    })
-
-    layers.simulationMarkers.push(L.mapbox.featureLayer().setGeoJSON(featureCollectionInsideCircle));
-    layers.simulationMarkers[layers.simulationMarkers.length - 1].on('mouseover', (e) => {
-        e.layer.openPopup();
-      })
-      .on('mouseout', (e) => {
-        e.layer.closePopup();
-      })
-    map.addLayer(layers.simulationMarkers[layers.simulationMarkers.length - 1]);
+    updateSimulationMarkersProperties(insideCircle, type);
   }
 
-  function simulateRide(citizen, place, iteration) {
+  function simulateRide(citizen, place, iteration, numberOfSimulations, timeOfSimulationStart) {
     // update destination
-    citizen.destination = _.cloneDeep(place.location);
-    // citizen.location.properties['title'] = `Citizen at [${citizen.location.geometry.coordinates[0]}, ${citizen.location.geometry.coordinates[1]}] with destination [${citizen.destination.geometry.coordinates[0]}, ${citizen.destination.geometry.coordinates[1]}]`
     const vehicleLocations = vehicles.filter(vehicle => vehicle.status === 'idle').map(vehicle => vehicle.location);
 
-    if (vehicleLocations.length === 0) {
+    console.log(vehicleLocations, iteration);
+
+    if (vehicleLocations.length === 0 || citizen.destination !== null) {
       return false;
     }
 
     // find nearest vehicle
     const nearestVehicleFeature = turf.nearest(citizen.location, turf.featureCollection(vehicleLocations))
-    const nearestVehicleObject = vehicles[vehicleLocations.indexOf(nearestVehicleFeature)];
-    
-    nearestVehicleObject.status = 'on-the-road';
+    const nearestVehicle = vehicles.filter(vehicle => vehicle.location === nearestVehicleFeature)[0];
+    console.log(nearestVehicle, iteration);
+    nearestVehicle.status = 'on-the-road';
+    citizen.destination = _.cloneDeep(place.location);
+    citizen.vehicle = _.cloneDeep(nearestVehicle);
     // road from his place to vehicle
     const citizenCoordinates = citizen.location.geometry.coordinates;
     const vehicleCoordinates = nearestVehicleFeature.geometry.coordinates;
     let startEnd = citizenCoordinates[0]+','+citizenCoordinates[1]+';'+vehicleCoordinates[0]+','+vehicleCoordinates[1];
-    const directionsCitizenVehicleAPI = 'https://api.tiles.mapbox.com/v4/directions/mapbox.walking/'+startEnd+'.json?access_token='+L.mapbox.accessToken;
+    const directionsCitizenVehicleAPI = 'https://api.mapbox.com/directions/v5/mapbox/walking/' + startEnd + '.json?geometries=geojson&access_token=' + L.mapbox.accessToken;
 
     $.get(directionsCitizenVehicleAPI, (data) => {
       let coordsAB = data.routes[0].geometry.coordinates;
@@ -351,26 +371,13 @@
       let totalDuration = data.routes[0].duration;
       const placeCoordinates = place.location.geometry.coordinates;
       startEnd = vehicleCoordinates[0]+','+vehicleCoordinates[1]+';'+placeCoordinates[0]+','+placeCoordinates[1];
-      const directionsVehiclePlaceAPI = 'https://api.tiles.mapbox.com/v4/directions/mapbox.driving/'+startEnd+'.json?access_token='+L.mapbox.accessToken;
+      const directionsVehiclePlaceAPI = 'https://api.mapbox.com/directions/v5/mapbox/driving/'+startEnd+'.json?annotations=speed,distance,duration&geometries=geojson&access_token='+L.mapbox.accessToken;
       $.get(directionsVehiclePlaceAPI, (data) => {
         let coordsBC = data.routes[0].geometry.coordinates;
         coordsBC.unshift(...coordsAB);
         coordsBC.push(placeCoordinates);
 
-
-
         totalDuration = totalDuration + data.routes[0].duration;
-        if (totalDuration > longestTime) {
-          longestTime = totalDuration;
-          if (typeof lastTripNotification !== 'undefined') {
-            clearTimeout(lastTripNotification)
-          }
-
-          lastTripNotification = setTimeout(() => {
-            onSimulation = false;
-            console.log(">>>>>>> SIMULATION ENDED");
-          }, longestTime);
-        }
 
         paths.push(turf.lineString(coordsBC, {
           "name": `iteration ${iteration} path`,
@@ -388,6 +395,8 @@
             e.layer.closePopup();
           }))
 
+        let simulationPathLayerIndex = layers.simulationPaths.length - 1;
+
         map.addLayer(layers.simulationPaths[layers.simulationPaths.length - 1]);
 
         let totalDurationParsed = moment.duration(totalDuration, 'seconds').humanize()
@@ -401,19 +410,35 @@
             })
           })
         )
+        let ridesDurationLayerIndex = layers.ridesDuration.length - 1;
         map.addLayer(layers.ridesDuration[layers.ridesDuration.length - 1]);
-        tripEndingNotification.push(setTimeout(() => {
+        tripEndingNotification.push(setTimeout((iteration) => {
           console.log('>>>>>>> TRIP CONCLUDED')
           console.log('======================')
           console.log('Citizen moved from ', citizen.location, ' to ', citizen.destination);
-          console.log('Nearest vehicle founded at ', nearestVehicleObject.location);
+          console.log('Nearest vehicle founded at ', nearestVehicle.location);
           console.log('======================')
-          rides.push(new Ride('something', _.cloneDeep(citizen), _.cloneDeep(nearestVehicleObject), _.cloneDeep(place), totalDuration));
+          rides.push(new Ride(currentSimulation.id, _.cloneDeep(citizen), _.cloneDeep(nearestVehicle), _.cloneDeep(place), totalDuration));
           citizen.destination = null;
           citizen.location = place.location;
-          nearestVehicleObject.location = place.location;
-          nearestVehicleObject.status = 'idle';
-        }, totalDuration)); // to speed up everything instead of converting seconds to miliseconds
+          nearestVehicle.location = place.location;
+          nearestVehicle.status = 'idle';
+          console.log(nearestVehicle);
+          let vehicleMarkers = layers.simulationMarkers[0].getGeoJSON();
+          console.log(vehicleMarkers, layers.simulationMarkers[0].getGeoJSON());
+          vehicleMarkers.features.filter(feature => feature.properties.id === nearestVehicle.id)[0].geometry.coordinates = nearestVehicle.location.geometry.coordinates;
+          layers.simulationMarkers[0].setGeoJSON(vehicleMarkers).addTo(map);
+          let citizenMarkers = layers.simulationMarkers[1].getGeoJSON();
+          citizenMarkers.features.filter(feature => feature.properties.id === citizen.id)[0].geometry.coordinates = citizen.location.geometry.coordinates;
+          layers.simulationMarkers[1].setGeoJSON(citizenMarkers).addTo(map);
+          console.log('>>>> ridesDuration', layers.ridesDuration, iteration)
+          map.removeLayer(layers.ridesDuration[ridesDurationLayerIndex]);
+          layers.simulationPaths[simulationPathLayerIndex].clearLayers();
+          if (iteration === numberOfSimulations - 1) {
+            finalizeSimulation();
+            console.log('>>>>>> SIMULATION ENDED');
+          }
+        }, totalDuration, iteration, simulationPathLayerIndex, ridesDurationLayerIndex, )); // to speed up everything instead of converting seconds to miliseconds
 
       });
     });
@@ -431,36 +456,54 @@
     tripEndingNotification.length = 0;
   }
 
-  function startSimulation() {
-    let getRandomVehicleIndex = function () { 
-      return Math.floor(Math.random() * (vehicles.length))
-    };
-
-    let getRandomCitizenIndex = function () {
-      return Math.floor(Math.random() * (citizens.length))
-    };
-
+  function startSimulation(id) {
+    currentSimulation = new Simulation(null);
+    // let timeOfDay = $('#timeOfDay').value();
     let getRandomPlaceIndex = function () {
-      return Math.floor(Math.random() * (places.length))
+      return Math.floor(Math.random() * (places.length));
     };
 
-    for (var i = 0; i < 10; i++) {
-      let citizenIndex = getRandomCitizenIndex();
-      let citizen = citizens[citizenIndex];
-      console.log(citizen, citizenIndex);
-      let j = 0;
-      try {
-        while (citizen.destination !== null && j <= 20) {
-          citizenIndex = getRandomCitizenIndex();
-          citizen = citizens[citizenIndex];
-          j++;
-          console.log(citizen, citizenIndex);
-        }
-      } catch (err) {
-
-      }
-      simulateRide(citizens[citizenIndex], places[getRandomPlaceIndex()], i)
+    let numberOfSimulations = Math.floor(Math.random() * (7200 - 3600)) + 3600;
+    let timeOfSimulationStart = new Date();
+    for (var i = 0; i < numberOfSimulations; i++) {
+      citizenIndex = i % citizens.length;
+      
+      setTimeout((citizen, place, iteration) => {
+        simulateRide(citizen, place, iteration, numberOfSimulations, timeOfSimulationStart);
+      }, Math.floor(Math.random() * (getMaxTime() - getMinTime())) + getMinTime(), citizens[citizenIndex], places[getRandomPlaceIndex()], i);
     }
+  }
+
+  function getMaxTime(timeOfDay) {
+    switch(timeOfDay) {
+    case 'morning':
+      return 10;
+    case 'afternoon':
+      return 100;
+    case 'evening':
+      return 1000;
+    default: 
+      return 500;
+    }
+  }
+
+  function getMinTime(timeOfDay) {
+    switch(timeOfDay) {
+    case 'morning':
+      return 5;
+    case 'afternoon':
+      return 50;
+    case 'evening':
+      return 500;
+    default: 
+      return 250;
+    }
+  }
+
+  function finalizeSimulation() {
+    this.onSimulation = false;
+    currentSimulation.rides = rides;
+    window.localStorage.setItem(currentSimulation.id, JSON.stringify(currentSimulation, null, 4));
   }
 
   </script>
