@@ -117,6 +117,9 @@
     this.rides = rides;
   }
 
+  let totalSimulationDuration = 0;
+  let finishSimulation = null;
+
   let maxSpeed = 45
   let numberOfVehicles;
   let numberOfCitizens;
@@ -342,9 +345,10 @@
 
   function simulateRide(citizen, place, iteration, numberOfSimulations, timeOfSimulationStart) {
     // update destination
+    let timeOfRideStart = moment().seconds();
+
     const vehicleLocations = vehicles.filter(vehicle => vehicle.status === 'idle').map(vehicle => vehicle.location);
 
-    console.log(vehicleLocations, iteration);
 
     if (vehicleLocations.length === 0 || citizen.destination !== null) {
       return false;
@@ -353,7 +357,6 @@
     // find nearest vehicle
     const nearestVehicleFeature = turf.nearest(citizen.location, turf.featureCollection(vehicleLocations))
     const nearestVehicle = vehicles.filter(vehicle => vehicle.location === nearestVehicleFeature)[0];
-    console.log(nearestVehicle, iteration);
     nearestVehicle.status = 'on-the-road';
     citizen.destination = _.cloneDeep(place.location);
     citizen.vehicle = _.cloneDeep(nearestVehicle);
@@ -368,7 +371,7 @@
       coordsAB.unshift(citizenCoordinates);
       coordsAB.push(vehicleCoordinates);
 
-      let totalDuration = data.routes[0].duration;
+      let totalRideDuration = data.routes[0].duration;
       const placeCoordinates = place.location.geometry.coordinates;
       startEnd = vehicleCoordinates[0]+','+vehicleCoordinates[1]+';'+placeCoordinates[0]+','+placeCoordinates[1];
       const directionsVehiclePlaceAPI = 'https://api.mapbox.com/directions/v5/mapbox/driving/'+startEnd+'.json?annotations=speed,distance,duration&geometries=geojson&access_token='+L.mapbox.accessToken;
@@ -377,11 +380,23 @@
         coordsBC.unshift(...coordsAB);
         coordsBC.push(placeCoordinates);
 
-        totalDuration = totalDuration + data.routes[0].duration;
+        totalRideDuration = totalRideDuration + data.routes[0].duration;
+        let relativeDurationToStartOfSimulation =  timeOfRideStart - timeOfSimulationStart + totalRideDuration;
+        if (relativeDurationToStartOfSimulation > totalSimulationDuration) {
+          totalSimulationDuration = relativeDurationToStartOfSimulation;
+          if (finishSimulation !== null) {
+            clearTimeout(finishSimulation);
+          }
+
+          finishSimulation = setTimeout(() => {            
+            finalizeSimulation();
+            console.log('>>>>>> SIMULATION ENDED');
+          }, totalRideDuration + 1000);
+        }
 
         paths.push(turf.lineString(coordsBC, {
           "name": `iteration ${iteration} path`,
-          "duration": totalDuration, 
+          "duration": totalRideDuration, 
           "stroke": pathColors[iteration],
           "stroke-width": 4,
           "opacity":1
@@ -399,13 +414,13 @@
 
         map.addLayer(layers.simulationPaths[layers.simulationPaths.length - 1]);
 
-        let totalDurationParsed = moment.duration(totalDuration, 'seconds').humanize()
+        let totalRideDurationParsed = moment.duration(totalRideDuration, 'seconds').humanize()
         
         layers.ridesDuration.push(L.marker([ coordsBC[ parseInt(coordsBC.length * 0.5)][1],
           coordsBC[ parseInt(coordsBC.length * 0.5) ][0] ], {
             icon: L.divIcon({
               className: 'distance-icon',
-              html: `<strong style="color: ${pathColors[iteration]}">${totalDurationParsed}</strong>`,
+              html: `<strong style="color: ${pathColors[iteration]}">${totalRideDurationParsed}</strong>`,
               iconSize: [60, 23]
             })
           })
@@ -418,27 +433,20 @@
           console.log('Citizen moved from ', citizen.location, ' to ', citizen.destination);
           console.log('Nearest vehicle founded at ', nearestVehicle.location);
           console.log('======================')
-          rides.push(new Ride(currentSimulation.id, _.cloneDeep(citizen), _.cloneDeep(nearestVehicle), _.cloneDeep(place), totalDuration));
+          rides.push(new Ride(currentSimulation.id, _.cloneDeep(citizen), _.cloneDeep(nearestVehicle), _.cloneDeep(place), totalRideDuration));
           citizen.destination = null;
           citizen.location = place.location;
           nearestVehicle.location = place.location;
           nearestVehicle.status = 'idle';
-          console.log(nearestVehicle);
           let vehicleMarkers = layers.simulationMarkers[0].getGeoJSON();
-          console.log(vehicleMarkers, layers.simulationMarkers[0].getGeoJSON());
           vehicleMarkers.features.filter(feature => feature.properties.id === nearestVehicle.id)[0].geometry.coordinates = nearestVehicle.location.geometry.coordinates;
           layers.simulationMarkers[0].setGeoJSON(vehicleMarkers).addTo(map);
           let citizenMarkers = layers.simulationMarkers[1].getGeoJSON();
           citizenMarkers.features.filter(feature => feature.properties.id === citizen.id)[0].geometry.coordinates = citizen.location.geometry.coordinates;
           layers.simulationMarkers[1].setGeoJSON(citizenMarkers).addTo(map);
-          console.log('>>>> ridesDuration', layers.ridesDuration, iteration)
           map.removeLayer(layers.ridesDuration[ridesDurationLayerIndex]);
           layers.simulationPaths[simulationPathLayerIndex].clearLayers();
-          if (iteration === numberOfSimulations - 1) {
-            finalizeSimulation();
-            console.log('>>>>>> SIMULATION ENDED');
-          }
-        }, totalDuration, iteration, simulationPathLayerIndex, ridesDurationLayerIndex, )); // to speed up everything instead of converting seconds to miliseconds
+        }, totalRideDuration, iteration, simulationPathLayerIndex, ridesDurationLayerIndex, )); // to speed up everything it's using seconds as milliseconds
 
       });
     });
@@ -457,6 +465,7 @@
   }
 
   function startSimulation(id) {
+    console.log('>>>>> SIMULATION STARTS');
     currentSimulation = new Simulation(null);
     // let timeOfDay = $('#timeOfDay').value();
     let getRandomPlaceIndex = function () {
@@ -464,7 +473,7 @@
     };
 
     let numberOfSimulations = Math.floor(Math.random() * (7200 - 3600)) + 3600;
-    let timeOfSimulationStart = new Date();
+    let timeOfSimulationStart = moment().seconds();
     for (var i = 0; i < numberOfSimulations; i++) {
       citizenIndex = i % citizens.length;
       
