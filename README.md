@@ -12,3 +12,6 @@ To change the location, just click wherever on the map and the central marker wi
 
 To start a simulation just click on the button located in the bottom-right corner. 
 
+## Remarks
+
+Currently, the time scala used is 1000:1, meaning that a second is being represented as a millisecond, to avoid long running scripts that over an hour go. 
