@@ -445,7 +445,7 @@
         paths.push(turf.lineString(coordsBC, {
           "name": `iteration ${iteration} path`,
           "duration": totalRideDuration, 
-          "stroke": pathColors[iteration],
+          "stroke": pathColors[iteration % 10],
           "stroke-width": 4,
           "opacity":1
         }));
