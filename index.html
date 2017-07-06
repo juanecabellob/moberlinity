@@ -149,10 +149,17 @@
   const tripEndingNotification = [];
   const pathColors = [ '#815da6', '#599ba9', '#54bd36', '#530101', '#add5c5', '#919b30', '#cd7d84', '#855c51', '#f011ed', '#b54a71', '#6294e3' ];
 
+  /**
+   * Generates a random unique ID
+   * @return string - Unique ID (non RFC4122 compliant)
+   */
   function getUID() {
     return Math.random().toString(36).substring(2) + (new Date()).getTime().toString(36);
   }
   
+  /**
+   * Creates map and sets central marker object
+   */
   (function createMap() {
     L.mapbox.accessToken = 'pk.eyJ1IjoianVhbmVjYWJlbGxvYiIsImEiOiJjajRqdXI1bjEwbnZwMnFvNzlsZDN1MzliIn0.BRkacCy_B0Yvz-6nR8wYuQ';
     map = L.mapbox.map('app').setView([51.505, -0.09], 13);
@@ -181,13 +188,20 @@
     drawCircleArea();
   })();
 
+  /**
+   *  Retrieves the point object of the central marker
+   *  @return object - point object of the central marker
+   */
   function getMarkerPoint() {
     const position = layers.centralMarker.getLatLng();
     const point = turf.point([ position.lng, position.lat ])
     return point;
   }
 
-  // creates a buffer of points in circle form
+  /**
+   * Generates a point buffer which has a circle form
+   * @return object - polygon object that contains all the buffered points
+   */
   function pointBuffer(point, radius, resolution, units) {
     let ring = []
     let resMultiple = 360/resolution;
@@ -202,6 +216,9 @@
     return turf.polygon([ring]);
   }
 
+  /**
+   * Clears all layers but the tile layer, circle polygon and the central marker layer of the existing map and sets all simulation arrays to 0
+   */
   function resetMap() {
     layers.simulationMarkers.forEach((layer) => {
       layer.clearLayers();
@@ -229,6 +246,9 @@
     paths.length = 0;
   }
 
+  /**
+   * Adds a layer that contains the circle created by {@link pointBuffer} to the map
+   */
   function drawCircleArea() {
     const point = getMarkerPoint();
     if (layers.circleArea !== null) {
@@ -247,12 +267,19 @@
     map.addLayer(layers.circleArea);
   }
 
+  /**
+   * Runs a simulation
+   */
   function run() {
     resetMap();
     prepareSimulation();
     startSimulation();
   }
 
+  /**
+   * Callback that triggers the repositioning of the central marker and rerenders the circle around it
+   * @param e - event object
+   */
   function onMapClick(e) {    
     initialCoordenates = [ e.latlng.lat, e.latlng.lng ];
     layers.centralMarker.setLatLng(initialCoordenates);
@@ -260,6 +287,10 @@
     drawCircleArea();
   }
 
+  /**
+   * Prepares the markers of the simulation
+   * TODO: If a simulation has been selected, load it from localStorage
+   */
   function prepareSimulation() {
     numberOfVehicles = prompt('Please enter the number of vehicles', '30');
     numberOfCitizens = prompt('Please enter the number of citizens', '10');
@@ -269,6 +300,9 @@
     onSimulation = true;
   }
 
+  /**
+   * Binds to the mousewheel event a function that adapts the area of the circle
+   */
   $('.leaflet-marker-draggable').on('mousewheel',function(event){
     let wheelDelta= event.originalEvent.wheelDeltaY;
     if (currentRadius - wheelDelta * 0.001 >= 0.2 && currentRadius - wheelDelta * 0.001 <= 8 && !onSimulation) {
@@ -277,9 +311,13 @@
     }
 
     event.stopPropagation();
-    return false;
   });
 
+  /** 
+   * Takes a ffeature collection and based on the type it belongs adds properties to it and then adds it to the map as a layer
+   * @param featureCollection - an object of type featureCollection that holds all features
+   * @param type - string which could be of type 'vehicles', 'citizens', or 'places'
+   */
   function updateSimulationMarkersProperties(featureCollection, type) {
     turf.featureEach(featureCollection, (currentFeature) => {
       switch (type) {
@@ -322,6 +360,9 @@
     map.addLayer(layers.simulationMarkers[layers.simulationMarkers.length - 1]);
   }
 
+  /**
+   * Generates random markers scattered around the circle area 
+   */
   function generateMarkers(number, type) {
     let featureCollection = turf.random('point', number, {
       bbox: turf.bbox(bufferedPoints)  
@@ -343,6 +384,13 @@
     updateSimulationMarkersProperties(insideCircle, type);
   }
 
+  /**
+   * Simulates a ride
+   * @param citizen - object containing the citizen that is moving
+   * @param place - object containing  the destination of the citizen
+   * @param iteration - number that holds the iteration number of the simulation
+   * @param timeOfSimulationStart - number that hold the time in seconds of the simulation's start
+   */
   function simulateRide(citizen, place, iteration, numberOfSimulations, timeOfSimulationStart) {
     // update destination
     let timeOfRideStart = moment().seconds();
@@ -454,6 +502,9 @@
     return true;
   }
 
+  /**
+   * Clears all the timeouts of a simulation
+   */
   function clearAllTimeouts() {
     if (tripEndingNotification.length === 0) {
       return;
@@ -464,6 +515,10 @@
     tripEndingNotification.length = 0;
   }
 
+  /**
+   * Starts the simulation
+   * @todo take the id and load the simulation based on the id
+   */
   function startSimulation(id) {
     console.log('>>>>> SIMULATION STARTS');
     currentSimulation = new Simulation(null);
@@ -483,6 +538,11 @@
     }
   }
 
+  /**
+   * Takes a string and returns a number simulating the max numbers of seconds that can go by without a citizen using a vehicle
+   * @param timeOfDay - string with values of either 'morning', 'afternoon', or 'evening'
+   * @return number - max numbers of seconds that can go by without a citizen using a vehicle
+   */
   function getMaxTime(timeOfDay) {
     switch(timeOfDay) {
     case 'morning':
@@ -496,6 +556,11 @@
     }
   }
 
+  /**
+   * Takes a string and returns a number simulating the min numbers of seconds that can go by without a citizen using a vehicle
+   * @param timeOfDay - string with values of either 'morning', 'afternoon', or 'evening'
+   * @return number - min numbers of seconds that can go by without a citizen using a vehicle
+   */
   function getMinTime(timeOfDay) {
     switch(timeOfDay) {
     case 'morning':
@@ -509,10 +574,13 @@
     }
   }
 
+  /**
+   * Finalizes a simulation by storing the simulation on localStorage and setting the flag of onSimulation to false
+   */
   function finalizeSimulation() {
     this.onSimulation = false;
     currentSimulation.rides = rides;
-    window.localStorage.setItem(currentSimulation.id, JSON.stringify(currentSimulation, null, 4));
+    window.localStorage.setItem(`simulation-${currentSimulation.id}`, JSON.stringify(currentSimulation, null, 4));
   }
 
   </script>
