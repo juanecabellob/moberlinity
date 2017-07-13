@@ -73,7 +73,7 @@
 <body>
 <div id="app"></div>
 <button onclick="run()" class="initializer"> Start simulation</button>
-  
+
 <script src='https://npmcdn.com/@turf/turf/turf.min.js'></script>
 <script src='https://api.tiles.mapbox.com/mapbox.js/v2.0.1/mapbox.js'></script>
 <link href='https://api.tiles.mapbox.com/mapbox.js/v2.0.1/mapbox.css' rel='stylesheet' />
@@ -117,6 +117,22 @@
     this.rides = rides;
   }
 
+  const layers = {
+    tile: null,
+    centralMarker: null,
+    circleArea: null,
+    simulationPaths: [],
+    simulationMarkers: [],
+    ridesDuration: []
+  }
+
+  const runningIntervalsAndTimeouts = {
+    rideEnd: [],
+    rideAnimation: [],
+    rideStart: null,
+    simulationEnd: null
+  }
+
   let totalSimulationDuration = 0;
   let finishSimulation = null;
 
@@ -127,27 +143,13 @@
   let map;
   let currentRadius = 5; // kilometers
   let bufferedPoints;
-  let longestTime = 0;
-  let lastTripNotification;
-  let circleArea;
-  let tileLayer;
   let currentSimulation;
-  const layers = {
-    tile: null,
-    centralMarker: null,
-    circleArea: null,
-    simulationPaths: [],
-    simulationMarkers: [],
-    ridesDuration: []
-  }
   let onSimulation = false;
   const vehicles = [];
   const places = [];
   const citizens = [];
   const paths = [];
   const rides = [];
-  const tripEndingNotification = [];
-  const citizenTripPaths = [];
   const pathColors = [ '#815da6', '#599ba9', '#54bd36', '#530101', '#add5c5', '#919b30', '#cd7d84', '#855c51', '#f011ed', '#b54a71', '#6294e3' ];
 
   /**
@@ -218,36 +220,6 @@
   }
 
   /**
-   * Clears all layers but the tile layer, circle polygon and the central marker layer of the existing map and sets all simulation arrays to 0
-   */
-  function resetMap() {
-    layers.simulationMarkers.forEach((layer) => {
-      layer.clearLayers();
-    });
-
-    layers.simulationPaths.forEach((layer) => {
-      layer.clearLayers();
-    });
-
-    layers.ridesDuration.forEach((layer) => {
-      map.removeLayer(layer);
-    });
-
-    clearAllTimeouts();
-    onSimulation = false;
-    
-    vehicles.length = 0;
-    places.length = 0;
-    citizens.length = 0;
-    paths.length = 0;
-    rides.length = 0;
-    layers.simulationPaths.length = 0;
-    layers.simulationMarkers.length = 0;
-    layers.ridesDuration.length = 0;
-    paths.length = 0;
-  }
-
-  /**
    * Adds a layer that contains the circle created by {@link pointBuffer} to the map
    */
   function drawCircleArea() {
@@ -269,15 +241,6 @@
   }
 
   /**
-   * Runs a simulation
-   */
-  function run() {
-    resetMap();
-    prepareSimulation();
-    startSimulation();
-  }
-
-  /**
    * Callback that triggers the repositioning of the central marker and rerenders the circle around it
    * @param e - event object
    */
@@ -286,19 +249,6 @@
     layers.centralMarker.setLatLng(initialCoordenates);
     map.setView(initialCoordenates, 13);
     drawCircleArea();
-  }
-
-  /**
-   * Prepares the markers of the simulation
-   * TODO: If a simulation has been selected, load it from localStorage
-   */
-  function prepareSimulation() {
-    numberOfVehicles = prompt('Please enter the number of vehicles', '30');
-    numberOfCitizens = prompt('Please enter the number of citizens', '10');
-    generateMarkers(numberOfVehicles, 'vehicles');
-    generateMarkers(numberOfCitizens, 'citizens');
-    generateMarkers(Math.ceil(Math.random() * (100 - 50)) + 50, 'places');
-    onSimulation = true;
   }
 
   /**
@@ -412,44 +362,50 @@
     // road from his place to vehicle
     const citizenCoordinates = citizen.location.geometry.coordinates;
     const vehicleCoordinates = nearestVehicleFeature.geometry.coordinates;
-    let startEnd = citizenCoordinates[0]+','+citizenCoordinates[1]+';'+vehicleCoordinates[0]+','+vehicleCoordinates[1];
-    const directionsCitizenVehicleAPI = 'https://api.mapbox.com/directions/v5/mapbox/walking/' + startEnd + '.json?geometries=geojson&access_token=' + L.mapbox.accessToken;
+    
+    let startEnd = `${citizenCoordinates[0]},${citizenCoordinates[1]};${vehicleCoordinates[0]},${vehicleCoordinates[1]}`;
+
+    const directionsCitizenVehicleAPI = `https://api.mapbox.com/directions/v5/mapbox/walking/${startEnd}.json?geometries=geojson&access_token=${L.mapbox.accessToken}`;
 
     $.get(directionsCitizenVehicleAPI, (data) => {
       let coordsAB = data.routes[0].geometry.coordinates;
       coordsAB.unshift(citizenCoordinates);
       coordsAB.push(vehicleCoordinates);
 
+      // duration from initial location to vehicle
       let totalRideDuration = data.routes[0].duration;
       const placeCoordinates = place.location.geometry.coordinates;
-      startEnd = vehicleCoordinates[0]+','+vehicleCoordinates[1]+';'+placeCoordinates[0]+','+placeCoordinates[1];
-      const directionsVehiclePlaceAPI = 'https://api.mapbox.com/directions/v5/mapbox/driving/'+startEnd+'.json?geometries=geojson&access_token='+L.mapbox.accessToken;
+      startEnd = `${vehicleCoordinates[0]},${vehicleCoordinates[1]};${placeCoordinates[0]},${placeCoordinates[1]}`;
+      const directionsVehiclePlaceAPI = `https://api.mapbox.com/directions/v5/mapbox/driving/${startEnd}.json?geometries=geojson&access_token=${L.mapbox.accessToken}`;
       $.get(directionsVehiclePlaceAPI, (data) => {
         let coordsBC = data.routes[0].geometry.coordinates;
         coordsBC.unshift(...coordsAB);
         coordsBC.push(placeCoordinates);
 
+        // duration from vehicle to final location
         totalRideDuration = totalRideDuration + data.routes[0].duration;
         let relativeDurationToStartOfSimulation =  timeOfRideStart - timeOfSimulationStart + totalRideDuration;
+
         if (relativeDurationToStartOfSimulation > totalSimulationDuration) {
           totalSimulationDuration = relativeDurationToStartOfSimulation;
-          if (finishSimulation !== null) {
-            clearTimeout(finishSimulation);
+          if (runningIntervalsAndTimeouts.simulationEnd !== null) {
+            clearTimeout(runningIntervalsAndTimeouts.simulationEnd);
           }
 
-          finishSimulation = setTimeout(() => {            
+          runningIntervalsAndTimeouts.simulationEnd = setTimeout(() => {            
             finalizeSimulation();
             console.log('>>>>>> SIMULATION ENDED');
           }, (totalRideDuration * 100) + 1000);
         }
 
         paths.push(turf.lineString(coordsBC, {
-          "name": `iteration ${iteration} path`,
+          "name": `Iteration ${iteration} path`,
           "duration": totalRideDuration, 
           "stroke": pathColors[iteration % 10],
           "stroke-width": 4,
-          "opacity":1
+          "opacity": 1
         }));
+
         layers.simulationPaths.push(L.mapbox.featureLayer()
           .setGeoJSON(turf.featureCollection(paths))
           .on('mouseover', (e) => {
@@ -477,8 +433,8 @@
 
 
         let subleg = 0;
-        let pathUpdater = setInterval((pathEntry) => {
-          console.log('subleg: ', subleg++)
+        const pathUpdater = setInterval((pathEntry) => {
+          subleg = subleg + 1;
           let citizenMarkers = layers.simulationMarkers[1].getGeoJSON();
           let totalPathDistance = turf.lineDistance(paths[pathEntry]);
           let getNewPoint = turf.along(paths[pathEntry], totalPathDistance / 100 * subleg);
@@ -487,12 +443,13 @@
           layers.simulationMarkers[1].setGeoJSON(citizenMarkers).addTo(map);
         }, (totalRideDuration * 100) / 100, paths.length - 1);
 
-        citizenTripPaths.push(pathUpdater);
+        runningIntervalsAndTimeouts.rideAnimation.push(pathUpdater);
 
-        let ridesDurationLayerIndex = layers.ridesDuration.length - 1;
+        const ridesDurationLayerIndex = layers.ridesDuration.length - 1;
+
         map.addLayer(layers.ridesDuration[ridesDurationLayerIndex]);
-        tripEndingNotification.push(setTimeout((iteration, simulationPathLayerIndex, ridesDurationLayerIndex, citizenTripPathsIndex) => {
-          console.log('>>>>>>> TRIP CONCLUDED')
+        runningIntervalsAndTimeouts.rideEnd.push(setTimeout(() => {
+          console.log('>>>>>>> RIDE CONCLUDED')
           console.log('======================')
           console.log('Citizen moved from ', citizen.location, ' to ', citizen.destination);
           console.log('Nearest vehicle founded at ', nearestVehicle.location);
@@ -511,25 +468,12 @@
           layers.simulationMarkers[1].setGeoJSON(citizenMarkers).addTo(map);
           map.removeLayer(layers.ridesDuration[ridesDurationLayerIndex]);
           layers.simulationPaths[simulationPathLayerIndex].clearLayers();
-        }, (totalRideDuration * 100), iteration, simulationPathLayerIndex, ridesDurationLayerIndex, pathUpdater)); // to speed up everything it's using seconds as milliseconds
+        }, totalRideDuration * 100)); // to speed up everything it's using seconds as milliseconds
 
       });
     });
 
     return true;
-  }
-
-  /**
-   * Clears all the timeouts of a simulation
-   */
-  function clearAllTimeouts() {
-    if (tripEndingNotification.length === 0) {
-      return;
-    }
-
-    tripEndingNotification.map(timeout => clearTimeout(timeout))
-    console.log('>>>> All timeouts have been cleared');
-    tripEndingNotification.length = 0;
   }
 
   /**
@@ -553,6 +497,79 @@
         simulateRide(citizen, place, iteration, numberOfSimulations, timeOfSimulationStart);
       }, Math.floor(Math.random() * (getMaxTime() - getMinTime())) + getMinTime(), citizens[citizenIndex], places[getRandomPlaceIndex()], i);
     }
+  }
+
+  /**
+   * Runs a simulation
+   */
+  function run() {
+    resetMap();
+    prepareSimulation();
+    startSimulation();
+  }
+
+  /**
+   * Clears all layers but the tile layer, circle polygon and the central marker layer of the existing map and sets all simulation arrays to 0
+   */
+  function resetMap() {
+    layers.simulationMarkers.forEach((layer) => {
+      layer.clearLayers();
+    });
+
+    layers.simulationPaths.forEach((layer) => {
+      layer.clearLayers();
+    });
+
+    layers.ridesDuration.forEach((layer) => {
+      map.removeLayer(layer);
+    });
+
+    clearAllIntervalsAndTimeouts();
+    currentSimulation = null;
+    onSimulation = false;
+    
+    vehicles.length = 0;
+    places.length = 0;
+    citizens.length = 0;
+    paths.length = 0;
+    rides.length = 0;
+    layers.simulationPaths.length = 0;
+    layers.simulationMarkers.length = 0;
+    layers.ridesDuration.length = 0;
+    paths.length = 0;
+  }
+
+  /**
+   * Prepares the markers of the simulation
+   * TODO: If a simulation has been selected, load it from localStorage
+   */
+  function prepareSimulation() {
+    numberOfVehicles = prompt('Please enter the number of vehicles', '30');
+    numberOfCitizens = prompt('Please enter the number of citizens', '10');
+    generateMarkers(numberOfVehicles, 'vehicles');
+    generateMarkers(numberOfCitizens, 'citizens');
+    generateMarkers(Math.ceil(Math.random() * (100 - 50)) + 50, 'places');
+    onSimulation = true;
+  }
+
+  /**
+   * Clears all the timeouts of a simulation
+   */
+  function clearAllIntervalsAndTimeouts() {
+    if (runningIntervalsAndTimeouts.rideEnd.length === 0) {
+      return;
+    }
+
+    if (runningIntervalsAndTimeouts.simulationEnd !== null) {
+      clearTimeout(runningIntervalsAndTimeouts.simulationEnd)
+      runningIntervalsAndTimeouts.simulationEnd = null;
+    }
+
+    runningIntervalsAndTimeouts.rideAnimation.map(intervalId => clearInterval(intervalId));
+    runningIntervalsAndTimeouts.rideEnd.map(timeout => clearTimeout(timeout));
+    console.log('>>>> All timeouts have been cleared');
+    runningIntervalsAndTimeouts.rideAnimation.length = 0;
+    runningIntervalsAndTimeouts.rideEnd.length = 0;
   }
 
   /**
@@ -595,9 +612,9 @@
    * Finalizes a simulation by storing the simulation on localStorage and setting the flag of onSimulation to false
    */
   function finalizeSimulation() {
-    this.onSimulation = false;
+    onSimulation = false;
     currentSimulation.rides = rides;
-    window.localStorage.setItem(`simulation-${currentSimulation.id}`, JSON.stringify(currentSimulation, null, 4));
+    window.localStorage.setItem(`simulation-${currentSimulation.id}-${moment.utc()}`, JSON.stringify(currentSimulation, null, 4));
   }
 
   </script>
