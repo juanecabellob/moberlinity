@@ -147,6 +147,7 @@
   const paths = [];
   const rides = [];
   const tripEndingNotification = [];
+  const citizenTripPaths = [];
   const pathColors = [ '#815da6', '#599ba9', '#54bd36', '#530101', '#add5c5', '#919b30', '#cd7d84', '#855c51', '#f011ed', '#b54a71', '#6294e3' ];
 
   /**
@@ -422,7 +423,7 @@
       let totalRideDuration = data.routes[0].duration;
       const placeCoordinates = place.location.geometry.coordinates;
       startEnd = vehicleCoordinates[0]+','+vehicleCoordinates[1]+';'+placeCoordinates[0]+','+placeCoordinates[1];
-      const directionsVehiclePlaceAPI = 'https://api.mapbox.com/directions/v5/mapbox/driving/'+startEnd+'.json?annotations=speed,distance,duration&geometries=geojson&access_token='+L.mapbox.accessToken;
+      const directionsVehiclePlaceAPI = 'https://api.mapbox.com/directions/v5/mapbox/driving/'+startEnd+'.json?geometries=geojson&access_token='+L.mapbox.accessToken;
       $.get(directionsVehiclePlaceAPI, (data) => {
         let coordsBC = data.routes[0].geometry.coordinates;
         coordsBC.unshift(...coordsAB);
@@ -439,7 +440,7 @@
           finishSimulation = setTimeout(() => {            
             finalizeSimulation();
             console.log('>>>>>> SIMULATION ENDED');
-          }, totalRideDuration + 1000);
+          }, (totalRideDuration * 100) + 1000);
         }
 
         paths.push(turf.lineString(coordsBC, {
@@ -473,9 +474,24 @@
             })
           })
         )
+
+
+        let subleg = 0;
+        let pathUpdater = setInterval((pathEntry) => {
+          console.log('subleg: ', subleg++)
+          let citizenMarkers = layers.simulationMarkers[1].getGeoJSON();
+          let totalPathDistance = turf.lineDistance(paths[pathEntry]);
+          let getNewPoint = turf.along(paths[pathEntry], totalPathDistance / 100 * subleg);
+
+          citizenMarkers.features.filter(feature => feature.properties.id === citizen.id)[0].geometry.coordinates = getNewPoint.geometry.coordinates;
+          layers.simulationMarkers[1].setGeoJSON(citizenMarkers).addTo(map);
+        }, (totalRideDuration * 100) / 100, paths.length - 1);
+
+        citizenTripPaths.push(pathUpdater);
+
         let ridesDurationLayerIndex = layers.ridesDuration.length - 1;
-        map.addLayer(layers.ridesDuration[layers.ridesDuration.length - 1]);
-        tripEndingNotification.push(setTimeout((iteration) => {
+        map.addLayer(layers.ridesDuration[ridesDurationLayerIndex]);
+        tripEndingNotification.push(setTimeout((iteration, simulationPathLayerIndex, ridesDurationLayerIndex, citizenTripPathsIndex) => {
           console.log('>>>>>>> TRIP CONCLUDED')
           console.log('======================')
           console.log('Citizen moved from ', citizen.location, ' to ', citizen.destination);
@@ -487,6 +503,7 @@
           nearestVehicle.location = place.location;
           nearestVehicle.status = 'idle';
           let vehicleMarkers = layers.simulationMarkers[0].getGeoJSON();
+          clearInterval(pathUpdater);
           vehicleMarkers.features.filter(feature => feature.properties.id === nearestVehicle.id)[0].geometry.coordinates = nearestVehicle.location.geometry.coordinates;
           layers.simulationMarkers[0].setGeoJSON(vehicleMarkers).addTo(map);
           let citizenMarkers = layers.simulationMarkers[1].getGeoJSON();
@@ -494,7 +511,7 @@
           layers.simulationMarkers[1].setGeoJSON(citizenMarkers).addTo(map);
           map.removeLayer(layers.ridesDuration[ridesDurationLayerIndex]);
           layers.simulationPaths[simulationPathLayerIndex].clearLayers();
-        }, totalRideDuration, iteration, simulationPathLayerIndex, ridesDurationLayerIndex, )); // to speed up everything it's using seconds as milliseconds
+        }, (totalRideDuration * 100), iteration, simulationPathLayerIndex, ridesDurationLayerIndex, pathUpdater)); // to speed up everything it's using seconds as milliseconds
 
       });
     });

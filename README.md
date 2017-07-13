@@ -14,4 +14,4 @@ To start a simulation just click on the button located in the bottom-right corne
 
 ## Remarks
 
-Currently, the time scala used is 1000:1, meaning that a second is being represented as a millisecond, to avoid long running scripts that over an hour go. 
+Currently, the time scala used is 100:1, meaning that a second is being represented as a centisecond, to avoid long running scripts that go over an hour. 
