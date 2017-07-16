@@ -9,71 +9,18 @@
     name="viewport"
     content="width=device-width, initial-scale=1, user-scalable=0, maximum-scale=1, minimum-scale=1">
   <title>Moberlinity</title>
+  <link href="styles.css" rel="stylesheet" />
 
-  
-   <style>
-    body { 
-      margin: 0;
-      padding: 0; 
-    }
-    path {
-      pointer-events: none
-    }
-    #app { 
-      position: absolute;
-      height: 100%;
-      top: 51;
-      bottom: 0;
-      width: 100%;
-    }
-    .leaflet-container {
-      cursor: default;
-    }
-    .leaflet-marker-icon {
-      cursor: default;
-    }
-    .leaflet-marker-draggable:hover{
-      cursor: -webkit-grab;
-    }
-    .leaflet-marker-draggable:active{
-      cursor: -webkit-grabbing;
-    }
-    .distance-icon {
-      border-radius: 10px;
-      background: #fff;
-      color: #1a25b9;
-      text-align: center;
-      font-size: 9px;
-      display: inline-block;
-      border: 2px solid #1a25b9;
-    }
-
-    .initializer {
-      height: 40px; 
-      width: 200px; 
-      position: fixed; 
-      background: #16c8ce;
-      text-transform: uppercase; 
-      color: white;
-      border-radius: 2px;
-      font-size: 16px;
-      border: 0px #12a3a5;
-      bottom: 0; 
-      right: 0; 
-      margin-bottom: 60px; 
-      margin-right: 60px; 
-      z-index: 1000
-     -webkit-box-shadow: 10px 7px 14px 6px rgba(87,83,87,0.87);
-      -moz-box-shadow: 10px 7px 14px 6px rgba(87,83,87,0.87);
-      box-shadow: 10px 7px 14px 6px rgba(87,83,87,0.87);
-    }
-   </style>
 
 </head>
 <body>
 <div id="app"></div>
-<button onclick="run()" class="initializer"> Start simulation</button>
-
+<button onclick="run()" class="map-controllers" id="initializer"> Start simulation</button>
+<select class="map-controllers" id="history">
+  <option value=""></option>
+  <option value=""></option>
+  <option value=""></option>
+</select>
 <script src='https://npmcdn.com/@turf/turf/turf.min.js'></script>
 <script src='https://api.tiles.mapbox.com/mapbox.js/v2.0.1/mapbox.js'></script>
 <link href='https://api.tiles.mapbox.com/mapbox.js/v2.0.1/mapbox.css' rel='stylesheet' />
@@ -83,7 +30,21 @@
 
 <link href='https://www.mapbox.com/base/latest/base.css' rel='stylesheet' />
 
-<script> 
+<script>
+  const simulationHistory = [];
+
+  (function retrieveSimulations() {
+    let options = [];
+    let input = $('#history').empty();
+    input.prepend($('<option></option>').attr('value', '').text('History'));
+    for (let i = 0; i < localStorage.length; i ++) {
+      let simulation = localStorage.getItem(localStorage.key(i));
+      let simulationKey = localStorage.key(i);
+      input.prepend($('<option></option>').attr('value', localStorage.length - 1 - i ).text(moment(simulationKey.split('#').reverse()[0]).fromNow()));
+      simulationHistory.unshift(simulation);
+    }
+  })();
+
   function Vehicle(location, status, battery) {
     this.id = getUID();
     this.location = location;
@@ -415,9 +376,9 @@
             e.layer.closePopup();
           }))
 
-        let simulationPathLayerIndex = layers.simulationPaths.length - 1;
+        let currentPathLayerIndex = layers.simulationPaths.length - 1;
 
-        map.addLayer(layers.simulationPaths[layers.simulationPaths.length - 1]);
+        map.addLayer(layers.simulationPaths[currentPathLayerIndex]);
 
         let totalRideDurationParsed = moment.duration(totalRideDuration, 'seconds').humanize()
         
@@ -433,7 +394,7 @@
 
 
         let subleg = 0;
-        const pathUpdater = setInterval((pathEntry) => {
+        const citizenMovementAnimation = setInterval((pathEntry) => {
           subleg = subleg + 1;
           let citizenMarkers = layers.simulationMarkers[1].getGeoJSON();
           let totalPathDistance = turf.lineDistance(paths[pathEntry]);
@@ -443,11 +404,11 @@
           layers.simulationMarkers[1].setGeoJSON(citizenMarkers).addTo(map);
         }, (totalRideDuration * 100) / 100, paths.length - 1);
 
-        runningIntervalsAndTimeouts.rideAnimation.push(pathUpdater);
+        runningIntervalsAndTimeouts.rideAnimation.push(citizenMovementAnimation);
 
-        const ridesDurationLayerIndex = layers.ridesDuration.length - 1;
+        const currentRideDurationIndex = layers.ridesDuration.length - 1;
 
-        map.addLayer(layers.ridesDuration[ridesDurationLayerIndex]);
+        map.addLayer(layers.ridesDuration[currentRideDurationIndex]);
         runningIntervalsAndTimeouts.rideEnd.push(setTimeout(() => {
           console.log('>>>>>>> RIDE CONCLUDED')
           console.log('======================')
@@ -460,14 +421,14 @@
           nearestVehicle.location = place.location;
           nearestVehicle.status = 'idle';
           let vehicleMarkers = layers.simulationMarkers[0].getGeoJSON();
-          clearInterval(pathUpdater);
+          clearInterval(citizenMovementAnimation);
           vehicleMarkers.features.filter(feature => feature.properties.id === nearestVehicle.id)[0].geometry.coordinates = nearestVehicle.location.geometry.coordinates;
           layers.simulationMarkers[0].setGeoJSON(vehicleMarkers).addTo(map);
           let citizenMarkers = layers.simulationMarkers[1].getGeoJSON();
           citizenMarkers.features.filter(feature => feature.properties.id === citizen.id)[0].geometry.coordinates = citizen.location.geometry.coordinates;
           layers.simulationMarkers[1].setGeoJSON(citizenMarkers).addTo(map);
-          map.removeLayer(layers.ridesDuration[ridesDurationLayerIndex]);
-          layers.simulationPaths[simulationPathLayerIndex].clearLayers();
+          map.removeLayer(layers.ridesDuration[currentRideDurationIndex]);
+          layers.simulationPaths[currentPathLayerIndex].clearLayers();
         }, totalRideDuration * 100)); // to speed up everything it's using seconds as milliseconds
 
       });
@@ -614,7 +575,11 @@
   function finalizeSimulation() {
     onSimulation = false;
     currentSimulation.rides = rides;
-    window.localStorage.setItem(`simulation-${currentSimulation.id}-${moment.utc()}`, JSON.stringify(currentSimulation, null, 4));
+    let newSimulationKey = `simulation#${currentSimulation.id}#${moment().toISOString()}`;
+    window.localStorage.setItem(newSimulationKey, JSON.stringify(currentSimulation, null, 4));
+    let newSimulation = $('<option></option>').attr('value', localStorage.length).text(moment(newSimulationKey.split('#').reverse()[0]).fromNow());
+    $('#history').prepend(newSimulation);
+    simulationHistory.unshift(currentSimulation);
   }
 
   </script>
