@@ -23,10 +23,14 @@
 <script src="https://ajax.googleapis.com/ajax/libs/jquery/2.1.3/jquery.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/lodash.js/4.17.4/lodash.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/moment.js/2.18.1/moment.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/superagent/3.5.2/superagent.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/bluebird/3.5.0/bluebird.js"></script>
 
 <link href='https://www.mapbox.com/base/latest/base.css' rel='stylesheet' />
 
 <script>
+  const request = superagent; 
+
   const simulationHistory = [];
 
   (function retrieveSimulations() {
@@ -43,7 +47,7 @@
 
   $('#history').change((e) => {
     let selectedText = $('#history option:selected').attr('value')
-    console.log(`something was selected ${JSON.stringify(simulationHistory[selectedText], null, 4)}`)
+    // console.log(`something was selected ${JSON.stringify(simulationHistory[selectedText], null, 4)}`)
   })
 
   function Vehicle(location, status, battery) {
@@ -90,7 +94,11 @@
 
   const runningIntervalsAndTimeouts = {
     rideEnd: [],
-    rideAnimation: [],
+    rideAnimation: {
+      citizenToWaypoint: [],
+      vehicleToDestination: [],
+      secondAnimationStart: []
+    },
     rideStart: null,
     simulationEnd: null
   }
@@ -216,14 +224,14 @@
   /**
    * Binds to the mousewheel event a function that adapts the area of the circle
    */
-  $('.leaflet-marker-draggable').on('mousewheel',function(event){
-    let wheelDelta= event.originalEvent.wheelDeltaY;
+  $('.leaflet-marker-draggable').on('mousewheel',function(e){
+    let wheelDelta= e.originalEvent.wheelDeltaY;
     if (currentRadius - wheelDelta * 0.001 >= 0.2 && currentRadius - wheelDelta * 0.001 <= 8 && !onSimulation) {
       currentRadius = currentRadius - wheelDelta * 0.001;
       drawCircleArea();
     }
 
-    event.stopPropagation();
+    e.stopPropagation();
   });
 
   /** 
@@ -308,11 +316,29 @@
     // update destination
     let timeOfRideStart = moment().seconds();
     const duration = new function() {
-        this.timeFromInitialPositionToVehicle = null;
+        this.timeFromInitialPositionToWaypoint = null;
         this.timeFromVehiclePositionToFinalPosition = null;
+        this.multiLeg = true;
         this.getTotalDuration = (() => {
-          return this.timeFromVehiclePositionToFinalPosition + this.timeFromInitialPositionToVehicle;
+          return this.multiLeg ? this.timeFromVehiclePositionToFinalPosition + this.timeFromInitialPositionToWaypoint : this.timeFromInitialPositionToWaypoint;
         });
+    };
+
+    const apiCallOptions = function(endpoint, name) {
+      return {
+        endpoint: endpoint,
+        name: name
+      }
+    };
+
+    const coordinatesOfRoute = new function() {
+      this.firstLeg = [];
+      this.secondLeg = [];
+      this.multiLeg = true;
+      this.getAllCoordinates = (() => {
+        // the last of the first leg and the first of the second leg are the same
+        return this.multiLeg ? [ ...this.firstLeg.slice(0, this.firstLeg.length), ...this.secondLeg ] : this.firstLeg;
+      });
     };
 
     const vehicleLocations = vehicles.filter(vehicle => vehicle.status === 'idle').map(vehicle => vehicle.location);
@@ -331,134 +357,185 @@
     // road from his place to vehicle
     const citizenCoordinates = citizen.location.geometry.coordinates;
     const vehicleCoordinates = nearestVehicleFeature.geometry.coordinates;
+    const placeCoordinates = place.location.geometry.coordinates;
     
+
     let startEnd = `${citizenCoordinates[0]},${citizenCoordinates[1]};${vehicleCoordinates[0]},${vehicleCoordinates[1]}`;
+    let endpoint = `https://api.mapbox.com/directions/v5/mapbox/walking/${startEnd}.json?geometries=geojson&access_token=${L.mapbox.accessToken}`;
+    const directionsFromCitizenToVehicle = apiCallOptions(endpoint, 'citizenToVehicle');
+     
+    startEnd = `${citizenCoordinates[0]},${citizenCoordinates[1]};${placeCoordinates[0]},${placeCoordinates[1]}`;
+    endpoint = `https://api.mapbox.com/directions/v5/mapbox/walking/${startEnd}.json?geometries=geojson&access_token=${L.mapbox.accessToken}`;
+    const directionsFromCitizenToPlace = apiCallOptions(endpoint, 'citizenToPlace');
+    startEnd = `${vehicleCoordinates[0]},${vehicleCoordinates[1]};${placeCoordinates[0]},${placeCoordinates[1]}`;
+    endpoint = `https://api.mapbox.com/directions/v5/mapbox/driving/${startEnd}.json?geometries=geojson&access_token=${L.mapbox.accessToken}`; 
+    const directionsFromVehicleToPlace = apiCallOptions(endpoint, 'vehicleToPlace'); 
 
-    const directionsCitizenVehicleAPI = `https://api.mapbox.com/directions/v5/mapbox/walking/${startEnd}.json?geometries=geojson&access_token=${L.mapbox.accessToken}`;
-
-    $.get(directionsCitizenVehicleAPI, (data) => {
-      let coordsAB = data.routes[0].geometry.coordinates;
-      coordsAB.unshift(citizenCoordinates);
-      coordsAB.push(vehicleCoordinates);
-
-      duration.timeFromInitialPositionToVehicle = data.routes[0].duration;
-      const placeCoordinates = place.location.geometry.coordinates;
-      startEnd = `${vehicleCoordinates[0]},${vehicleCoordinates[1]};${placeCoordinates[0]},${placeCoordinates[1]}`;
-      const directionsVehiclePlaceAPI = `https://api.mapbox.com/directions/v5/mapbox/driving/${startEnd}.json?geometries=geojson&access_token=${L.mapbox.accessToken}`;
-      $.get(directionsVehiclePlaceAPI, (data) => {
-        let coordsBC = data.routes[0].geometry.coordinates;
-        coordsBC.unshift(vehicleCoordinates);
-        coordsBC.push(placeCoordinates);
-        let coordsAC = _.cloneDeep(coordsBC);
-        coordsAC.unshift(...coordsAB);
-        coordsAC.push(placeCoordinates);
-
-        duration.timeFromVehiclePositionToFinalPosition = data.routes[0].duration;
-        let relativeDurationToStartOfSimulation =  timeOfRideStart - timeOfSimulationStart + duration.getTotalDuration();
-
-        if (relativeDurationToStartOfSimulation > totalSimulationDuration) {
-          totalSimulationDuration = relativeDurationToStartOfSimulation;
-          if (runningIntervalsAndTimeouts.simulationEnd !== null) {
-            clearTimeout(runningIntervalsAndTimeouts.simulationEnd);
-          }
-
-          runningIntervalsAndTimeouts.simulationEnd = setTimeout(() => {            
-            finalizeSimulation();
-            console.log('>>>>>> SIMULATION ENDED');
-          }, (duration.getTotalDuration() * 100) + 1000);
+    Promise.map([directionsFromCitizenToVehicle, directionsFromCitizenToPlace, directionsFromVehicleToPlace], (apiCallOptions) => {
+      return Promise.join(request.get(apiCallOptions.endpoint), (data) => {
+        return {
+          name: apiCallOptions.name,
+          data: data.body
+        };
+      });
+    })
+    .then((routeInformation) => {
+      return routeInformation.map((route) => {
+        let coordinates = route.data.routes[0].geometry.coordinates;
+        switch (route.name) {
+        case 'vehicleToPlace':
+          coordinates.push(placeCoordinates);
+          coordinates.unshift(vehicleCoordinates);
+          break;
+        case 'citizenToVehicle': 
+          coordinates.push(vehicleCoordinates);
+          coordinates.unshift(citizenCoordinates);
+          break;
+        case 'citizenToPlace':
+          coordinates.push(placeCoordinates);
+          coordinates.unshift(citizenCoordinates);
+          break;
+        default:
+          break;
         }
 
-        paths.push(turf.lineString(coordsAC, {
-          "name": `Iteration ${iteration} path`,
-          "duration": duration.getTotalDuration(), 
-          "stroke": pathColors[iteration % 10],
-          "stroke-width": 4,
-          "opacity": 1
-        }));
+        return {
+          name: route.name,
+          coordinates: coordinates,
+          duration: route.data.routes[0].duration
+        };
+      })
+    })
+    .then((routes) => {
+      let routeDurationWithVehicleWaypoint = routes.filter(route => route.name === 'citizenToVehicle')[0].duration + routes.filter(route => route.name === 'vehicleToPlace')[0].duration;
+      let routeDurationWithoutVehicle = routes.filter(route => route.name === 'citizenToPlace')[0].duration;
+      routeDurationWithVehicleWaypoint >= routeDurationWithoutVehicle ? 
+        _.remove(routes, (route) => { return route.name !== 'citizenToPlace' }) :
+        _.remove(routes, (route) => { return route.name === 'citizenToPlace' });
 
-        layers.simulationPaths.push(L.mapbox.featureLayer()
-          .setGeoJSON(turf.featureCollection(paths))
-          .on('mouseover', (e) => {
-            e.layer.openPopup();
+      if (routes.length < 2) {
+        duration.multiLeg = false;
+        coordinatesOfRoute.multiLeg = false;
+        duration.timeFromInitialPositionToWaypoint = routes[0].duration;
+        coordinatesOfRoute.firstLeg = routes[0].coordinates;
+      } else if (routes.length === 2) {
+        duration.timeFromInitialPositionToWaypoint = routes[0].duration;
+        duration.timeFromVehiclePositionToFinalPosition = routes[1].duration;
+        coordinatesOfRoute.firstLeg = routes[0].coordinates;
+        coordinatesOfRoute.secondLeg = routes[1].coordinates;
+      }
+
+      let relativeDurationToStartOfSimulation =  timeOfRideStart - timeOfSimulationStart + duration.getTotalDuration();
+
+      if (relativeDurationToStartOfSimulation > totalSimulationDuration) {
+        totalSimulationDuration = relativeDurationToStartOfSimulation;
+        if (runningIntervalsAndTimeouts.simulationEnd !== null) {
+          clearTimeout(runningIntervalsAndTimeouts.simulationEnd);
+        }
+
+        runningIntervalsAndTimeouts.simulationEnd = setTimeout(() => {            
+          finalizeSimulation();
+          console.log('>>>>>> SIMULATION ENDED');
+        }, (duration.getTotalDuration() * 100) + 1000);
+      }
+
+      paths.push(turf.lineString(coordinatesOfRoute.getAllCoordinates(), {
+        "name": `Iteration ${iteration} path`,
+        "duration": duration.getTotalDuration(), 
+        "stroke": pathColors[iteration % 10],
+        "stroke-width": 4,
+        "opacity": 1
+      }));
+
+      layers.simulationPaths.push(L.mapbox.featureLayer()
+        .setGeoJSON(turf.featureCollection(paths))
+        .on('mouseover', (e) => {
+          e.layer.openPopup();
+        })
+        .on('mouseleave', (e) => {
+          e.layer.closePopup();
+        }))
+
+      let currentPathLayerIndex = layers.simulationPaths.length - 1;
+
+      map.addLayer(layers.simulationPaths[currentPathLayerIndex]);
+
+      let totalRideDurationParsed = moment.duration(duration.getTotalDuration(), 'seconds').humanize()
+      
+      layers.ridesDuration.push(L.marker([ coordinatesOfRoute.getAllCoordinates()[ parseInt(coordinatesOfRoute.getAllCoordinates().length * 0.5)][1],
+        coordinatesOfRoute.getAllCoordinates()[ parseInt(coordinatesOfRoute.getAllCoordinates().length * 0.5) ][0] ], {
+          icon: L.divIcon({
+            className: 'distance-icon',
+            html: `<strong style="color: ${pathColors[iteration]}">${totalRideDurationParsed}</strong>`,
+            iconSize: [60, 23]
           })
-          .on('mouseleave', (e) => {
-            e.layer.closePopup();
-          }))
-
-        let currentPathLayerIndex = layers.simulationPaths.length - 1;
-
-        map.addLayer(layers.simulationPaths[currentPathLayerIndex]);
-
-        let totalRideDurationParsed = moment.duration(duration.getTotalDuration(), 'seconds').humanize()
-        
-        layers.ridesDuration.push(L.marker([ coordsAC[ parseInt(coordsAC.length * 0.5)][1],
-          coordsAC[ parseInt(coordsAC.length * 0.5) ][0] ], {
-            icon: L.divIcon({
-              className: 'distance-icon',
-              html: `<strong style="color: ${pathColors[iteration]}">${totalRideDurationParsed}</strong>`,
-              iconSize: [60, 23]
-            })
-          })
-        )
+        })
+      )
 
 
-        let sublegAB = 0;
-        const citizenMovementToVehicleAnimation = setInterval(() => {
-          sublegAB = sublegAB + 1;
-          let citizenMarkers = layers.simulationMarkers[1].getGeoJSON();
-          let pathToVehicle = turf.lineString(coordsAB);
-          let totalPathDistance = turf.lineDistance(pathToVehicle);
-          let getNewPoint = turf.along(pathToVehicle, totalPathDistance / 100 * sublegAB);
+      let sublegsOfFirstLeg = 0;
+      const citizenMovementToVehicleAnimation = setInterval(() => {
+        sublegsOfFirstLeg = sublegsOfFirstLeg + 1;
+        let citizenMarkers = layers.simulationMarkers[1].getGeoJSON();
+        let pathToVehicle = turf.lineString(coordinatesOfRoute.firstLeg);
+        let totalPathDistance = turf.lineDistance(pathToVehicle);
+        let getNewPoint = turf.along(pathToVehicle, totalPathDistance / 100 * sublegsOfFirstLeg);
 
-          citizenMarkers.features.filter(feature => feature.properties.id === citizen.id)[0].geometry.coordinates = getNewPoint.geometry.coordinates;
-          layers.simulationMarkers[1].setGeoJSON(citizenMarkers).addTo(map);
-        }, (duration.timeFromInitialPositionToVehicle * 100) / 100);
+        citizenMarkers.features.filter(feature => feature.properties.id === citizen.id)[0].geometry.coordinates = getNewPoint.geometry.coordinates;
+        layers.simulationMarkers[1].setGeoJSON(citizenMarkers).addTo(map);
+      }, (duration.timeFromInitialPositionToWaypoint * 100) / 100);
 
-        let sublegBC = 0;
-        setTimeout(() => {
+      let sublegsOfSecondLeg = 0;
+      let citizenInVehicleToDestinationAnimation;
+      if (coordinatesOfRoute.multiLeg){
+        let startOfCitizenInVehicleToDestinationAnimation = setTimeout(() => {
           clearInterval(citizenMovementToVehicleAnimation)
-          const citizenInVehicleToDestinationAnimation = setInterval(() => {
-            sublegBC = sublegBC + 1;
+          citizenInVehicleToDestinationAnimation = setInterval(() => {
+            sublegsOfSecondLeg = sublegsOfSecondLeg + 1;
             let citizenMarkers = layers.simulationMarkers[1].getGeoJSON();
             let vehicleMarkers = layers.simulationMarkers[0].getGeoJSON();
-            let pathToDestination = turf.lineString(coordsBC);
+            let pathToDestination = turf.lineString(coordinatesOfRoute.secondLeg);
             let totalPathDistance = turf.lineDistance(pathToDestination);
-            let getNewPoint = turf.along(pathToDestination, totalPathDistance / 100 * sublegBC);
+            let getNewPoint = turf.along(pathToDestination, totalPathDistance / 100 * sublegsOfSecondLeg);
 
             citizenMarkers.features.filter(feature => feature.properties.id === citizen.id)[0].geometry.coordinates = getNewPoint.geometry.coordinates;
             vehicleMarkers.features.filter(feature => feature.properties.id === nearestVehicle.id)[0].geometry.coordinates = getNewPoint.geometry.coordinates;
             layers.simulationMarkers[0].setGeoJSON(vehicleMarkers).addTo(map);
             layers.simulationMarkers[1].setGeoJSON(citizenMarkers).addTo(map);
           }, (duration.timeFromVehiclePositionToFinalPosition * 100) / 100);
-        }, duration.timeFromInitialPositionToVehicle * 100)
-        //runningIntervalsAndTimeouts.rideAnimation.push(citizenMovementAnimation);
+        }, duration.timeFromInitialPositionToWaypoint * 100);
+        runningIntervalsAndTimeouts.rideAnimation.vehicleToDestination.push(citizenInVehicleToDestinationAnimation);
+        runningIntervalsAndTimeouts.rideAnimation.secondAnimationStart.push(startOfCitizenInVehicleToDestinationAnimation);
+      } else {
+        runningIntervalsAndTimeouts.rideAnimation.citizenToWaypoint.push(citizenMovementToVehicleAnimation);
+      }
 
-        const currentRideDurationIndex = layers.ridesDuration.length - 1;
+      const currentRideDurationIndex = layers.ridesDuration.length - 1;
 
-        map.addLayer(layers.ridesDuration[currentRideDurationIndex]);
-        runningIntervalsAndTimeouts.rideEnd.push(setTimeout(() => {
-          console.log('>>>>>>> RIDE CONCLUDED')
-          console.log('======================')
-          console.log('Citizen moved from ', citizen.location, ' to ', citizen.destination);
-          console.log('Nearest vehicle founded at ', nearestVehicle.location);
-          console.log('======================')
-          rides.push(new Ride(currentSimulation.id, _.cloneDeep(citizen), _.cloneDeep(nearestVehicle), _.cloneDeep(place), _.cloneDeep(duration)));
-          citizen.destination = null;
-          citizen.location = place.location;
-          nearestVehicle.location = place.location;
-          nearestVehicle.status = 'idle';
-          let vehicleMarkers = layers.simulationMarkers[0].getGeoJSON();
-          clearInterval(citizenMovementAnimation);
-          vehicleMarkers.features.filter(feature => feature.properties.id === nearestVehicle.id)[0].geometry.coordinates = nearestVehicle.location.geometry.coordinates;
-          layers.simulationMarkers[0].setGeoJSON(vehicleMarkers).addTo(map);
-          let citizenMarkers = layers.simulationMarkers[1].getGeoJSON();
-          citizenMarkers.features.filter(feature => feature.properties.id === citizen.id)[0].geometry.coordinates = citizen.location.geometry.coordinates;
-          layers.simulationMarkers[1].setGeoJSON(citizenMarkers).addTo(map);
-          map.removeLayer(layers.ridesDuration[currentRideDurationIndex]);
-          layers.simulationPaths[currentPathLayerIndex].clearLayers();
-        }, duration.getTotalDuration() * 100)); // to speed up everything it's using seconds as milliseconds
+      map.addLayer(layers.ridesDuration[currentRideDurationIndex]);
+      runningIntervalsAndTimeouts.rideEnd.push(setTimeout(() => {
+        console.log('>>>>>>> RIDE CONCLUDED')
+        console.log('======================')
+        console.log('Citizen moved from ', citizen.location, ' to ', citizen.destination);
+        console.log('Nearest vehicle founded at ', nearestVehicle.location);
+        console.log('======================')
+        rides.push(new Ride(currentSimulation.id, _.cloneDeep(citizen), _.cloneDeep(nearestVehicle), _.cloneDeep(place), _.cloneDeep(duration)));
+        citizen.destination = null;
+        citizen.location = place.location;
+        nearestVehicle.location = place.location;
+        nearestVehicle.status = 'idle';
+        let vehicleMarkers = layers.simulationMarkers[0].getGeoJSON();
+        
+        !(coordinatesOfRoute.multiLeg) ? clearInterval(citizenMovementToVehicleAnimation) : clearInterval(citizenInVehicleToDestinationAnimation);
 
-      });
+        vehicleMarkers.features.filter(feature => feature.properties.id === nearestVehicle.id)[0].geometry.coordinates = nearestVehicle.location.geometry.coordinates;
+        layers.simulationMarkers[0].setGeoJSON(vehicleMarkers).addTo(map);
+        let citizenMarkers = layers.simulationMarkers[1].getGeoJSON();
+        citizenMarkers.features.filter(feature => feature.properties.id === citizen.id)[0].geometry.coordinates = citizen.location.geometry.coordinates;
+        layers.simulationMarkers[1].setGeoJSON(citizenMarkers).addTo(map);
+        map.removeLayer(layers.ridesDuration[currentRideDurationIndex]);
+        layers.simulationPaths[currentPathLayerIndex].clearLayers();
+      }, duration.getTotalDuration() * 100)); // to speed up everything it's using seconds as milliseconds
     });
 
     return true;
@@ -556,10 +633,14 @@
       runningIntervalsAndTimeouts.simulationEnd = null;
     }
 
-    runningIntervalsAndTimeouts.rideAnimation.map(intervalId => clearInterval(intervalId));
+    runningIntervalsAndTimeouts.rideAnimation.citizenToWaypoint.map(intervalId => clearInterval(intervalId));
+    runningIntervalsAndTimeouts.rideAnimation.vehicleToDestination.map(intervalId => clearInterval(intervalId));
+    runningIntervalsAndTimeouts.rideAnimation.secondAnimationStart.map(timeoutId => clearInterval(timeoutId));
     runningIntervalsAndTimeouts.rideEnd.map(timeout => clearTimeout(timeout));
     console.log('>>>> All timeouts have been cleared');
-    runningIntervalsAndTimeouts.rideAnimation.length = 0;
+    runningIntervalsAndTimeouts.rideAnimation.citizenToWaypoint.length = 0;
+    runningIntervalsAndTimeouts.rideAnimation.vehicleToDestination.length = 0;
+    runningIntervalsAndTimeouts.rideAnimation.secondAnimationStart.length = 0;
     runningIntervalsAndTimeouts.rideEnd.length = 0;
   }
 
