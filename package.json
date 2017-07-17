@@ -1,0 +1,32 @@
+{
+  "name": "moberlinity",
+  "version": "1.0.0",
+  "description": "Car sharing simulation environment",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/juanecabellob/moberlinity.git"
+  },
+  "keywords": [
+    "turf",
+    "mapbox",
+    "open-data"
+  ],
+  "author": "@juanecabellob",
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/juanecabellob/moberlinity/issues"
+  },
+  "homepage": "https://github.com/juanecabellob/moberlinity#readme",
+  "dependencies": {
+    "bluebird": "^3.5.0",
+    "cors": "^2.8.4",
+    "express": "^4.15.3",
+    "express-url-cleaner": "0.0.9",
+    "lodash": "^4.17.4",
+    "turf": "^3.0.14"
+  }
+}

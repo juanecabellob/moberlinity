@@ -1,0 +1,65 @@
+body { 
+  margin: 0;
+  padding: 0; 
+}
+path {
+  pointer-events: none
+}
+#app { 
+  position: absolute;
+  height: 100%;
+  top: 51;
+  bottom: 0;
+  width: 100%;
+}
+.leaflet-container {
+  cursor: default;
+}
+.leaflet-marker-icon {
+  cursor: default;
+}
+.leaflet-marker-draggable:hover{
+  cursor: -webkit-grab;
+}
+.leaflet-marker-draggable:active{
+  cursor: -webkit-grabbing;
+}
+.distance-icon {
+  border-radius: 10px;
+  background: #fff;
+  color: #1a25b9;
+  text-align: center;
+  font-size: 9px;
+  display: inline-block;
+  border: 2px solid #1a25b9;
+}
+
+.map-controllers {
+  position: fixed; 
+  height: 40px; 
+  width: 200px; 
+  background: #16c8ce;
+  text-transform: uppercase; 
+  color: white;
+  border-radius: 2px;
+  font-size: 16px;
+  border: 0px #12a3a5;
+  z-index: 1000M
+ -webkit-box-shadow: 10px 7px 14px 6px rgba(87,83,87,0.87);
+  -moz-box-shadow: 10px 7px 14px 6px rgba(87,83,87,0.87);
+  box-shadow: 10px 7px 14px 6px rgba(87,83,87,0.87);
+}
+
+#history {
+  bottom: 0;
+  left: 0;
+  margin-bottom: 60px;
+  margin-left: 60px;
+}
+
+#initializer {  
+  bottom: 0; 
+  right: 0; 
+  margin-bottom: 60px; 
+  margin-right: 60px; 
+}
