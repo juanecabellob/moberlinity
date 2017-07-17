@@ -166,7 +166,7 @@
     })
     map.addLayer(layers.centralMarker);
     // TODO: to optimize performance use the express server to do calculations of 
-    request.get('http://localhost:3000/berlin-ubahn.json')
+    /*request.get('http://localhost:3000/berlin-ubahn.json')
       .then((data) => {
         layers.metro = data.body.map(lineString => L.mapbox.featureLayer().setGeoJSON(turf.featureCollection([lineString])));
         layers.metro.map(layer => map.addLayer(layer));
@@ -182,7 +182,7 @@
       })
       .catch((err) => {
         console.log(err);
-      });
+      });*/
     map.on('click', onMapClick);
     drawCircleArea();
   })();
@@ -194,7 +194,6 @@
   function getMarkerPoint() {
     const position = layers.centralMarker.getLatLng();
     const point = turf.point([ position.lng, position.lat ])
-    console.log(point)
     return point;
   }
 
@@ -466,7 +465,6 @@
         "stroke-width": 4,
         "opacity": 1
       }));
-      console.log(paths);
 
       layers.simulationPaths.push(L.mapbox.featureLayer()
         .setGeoJSON(turf.featureCollection(paths))
