@@ -1,2 +1,11 @@
 # Auto detect text files and perform LF normalization
 * text=auto
+berlinData/agency.txt filter=lfs diff=lfs merge=lfs -text
+berlinData/calendar_dates.txt filter=lfs diff=lfs merge=lfs -text
+berlinData/stop_times.txt filter=lfs diff=lfs merge=lfs -text
+berlinData/stops.txt filter=lfs diff=lfs merge=lfs -text
+berlinData/transfers.txt filter=lfs diff=lfs merge=lfs -text
+berlinData/trips.txt filter=lfs diff=lfs merge=lfs -text
+berlinData/calendar.txt filter=lfs diff=lfs merge=lfs -text
+berlinData/routes.txt filter=lfs diff=lfs merge=lfs -text
+berlinData/shapes.txt filter=lfs diff=lfs merge=lfs -text
