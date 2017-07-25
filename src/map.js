@@ -22,13 +22,13 @@ function Map() {
     tile: null,
     centralMarker: null,
     circleArea: null,
-    simulationPaths: null,
+    simulationPaths: {},
     simulationMarkers: {
       citizens: null,
       vehicles: null,
       places: null
     },
-    simulationRidesDurationMarkers: null,
+    simulationRidesDurationMarkers: {},
     metro: [],
     metroStations: null
   };
@@ -182,13 +182,13 @@ Map.prototype.getBufferedPoints = function() {
 }
 
 Map.prototype.setAndAddSimulationMarkerFeatureCollection = function(markerType, markersAsfeatureCollection) {
-  if (!(markerType in _.keys(this.layers.simulationMarkers))) {
+  if (!(markerType in this.layers.simulationMarkers)) {
     // TODO: Error handling
     return false;
   }
 
-  this.layers.simulationMarkers[markerKey] = L.mapbox.featureLayer().setGeoJSON(markersAsfeatureCollection);
-  this.addLayer(this.layers.simulationMarkers[markerKey]);
+  this.layers.simulationMarkers[markerType] = L.mapbox.featureLayer().setGeoJSON(markersAsfeatureCollection);
+  this.addLayer(this.layers.simulationMarkers[markerType]);
 }
 
 Map.prototype.setAndAddSimulationPathFeatureCollection = function(rideId, pathAsFeatureCollection) {
@@ -208,7 +208,8 @@ Map.prototype.updateMarkerCoordinates = function(markerType, id, newCoordinates)
   this.setAndAddSimulationMarkerFeatureCollection(markerType, markers);
 }
 
-Map.prototype.createAndAddSimulationRideDurationFeature = function(rideId, coordinates) {
+Map.prototype.createAndAddSimulationRideDurationFeature = function(rideId, coordinates, totalRideDurationParsed) {
+  let iteration = Math.floor(Math.random() * 10);
   // TODO: bind ride ID to the properties for better search
   let durationMarker = L.marker(coordinates, {
         icon: L.divIcon({
@@ -237,16 +238,8 @@ Map.prototype.removeSimulationRideLayers = function(rideId) {
   this.removeSimulationRideDurationMarker(rideId);
 }
 
+
 /**
  * Binds to the mousewheel event a function that adapts the area of the circle
  * @todo: undo jquery
  */
-$('.leaflet-marker-draggable').on('mousewheel', function(e){
-    let wheelDelta= e.originalEvent.wheelDeltaY;
-    if (this.currentRadius - wheelDelta * 0.001 >= 0.2 && this.currentRadius - wheelDelta * 0.001 <= 8 && !onSimulation) {
-      this.currentRadius = this.currentRadius - wheelDelta * 0.001;
-      this.drawCircleArea();
-    }
-
-    e.stopPropagation();
-  });

@@ -36,6 +36,15 @@ $(document).ready(() => {
   $('#initializer').on('click', () => {
     simulation.run();
   })
+  $('.leaflet-marker-draggable').on('mousewheel', function(e){
+    let wheelDelta= e.originalEvent.wheelDeltaY;
+    if (this.currentRadius - wheelDelta * 0.001 >= 0.2 && this.currentRadius - wheelDelta * 0.001 <= 8 && !onSimulation) {
+      this.currentRadius = this.currentRadius - wheelDelta * 0.001;
+      this.drawCircleArea();
+    }
+
+    e.stopPropagation();
+  });
 })
 </script>
 </body>

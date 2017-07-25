@@ -86,13 +86,17 @@ function Place(location) {
   this.location = location;
 }
 
-function Ride(simulationId, citizen, vehicle, finalLocation, duration) {
+function Ride(simulationId, citizen, vehicle, finalLocation) {
   this.id = getUID();
   this.citizen = citizen;
   this.vehicle = vehicle;
   this.finalLocation = finalLocation;
-  this.duration = duration;
   this.simulationId = simulationId;
+  this.duration = null;
+}
+
+Ride.prototype.setDuration = function(duration) {
+  this.duration = duration;
 }
 
 /** 
@@ -215,6 +219,7 @@ Simulation.prototype.simulateRide = function(citizen, place, iteration, numberOf
   nearestVehicle.status = 'on-the-road';
   citizen.destination = _.cloneDeep(place.location);
   citizen.vehicle = _.cloneDeep(nearestVehicle);
+  let ride = new Ride(this.id, _.cloneDeep(citizen), _.cloneDeep(nearestVehicle), _.cloneDeep(place))
   // road from his place to vehicle
   const citizenCoordinates = citizen.location.geometry.coordinates;
   const vehicleCoordinates = nearestVehicleFeature.geometry.coordinates;
@@ -310,7 +315,7 @@ Simulation.prototype.simulateRide = function(citizen, place, iteration, numberOf
 
     /* ------------------- call setAndAddSimulationPathFeatureCollection(markerTpe, id, newCoordinates) instead ---------------------- */
     // TODO: change iteration for a real ride ID
-    this.map.setAndAddSimulationPathFeatureCollection(iteration, turf.featureCollection(this.paths[this.paths.length - 1]));
+    this.map.setAndAddSimulationPathFeatureCollection(ride.id, turf.featureCollection([this.paths[this.paths.length - 1]]));
     /*layers.simulationPaths.push(L.mapbox.featureLayer().setGeoJSON()))
 
     let currentPathLayerIndex = layers.simulationPaths.length - 1;
@@ -323,7 +328,7 @@ Simulation.prototype.simulateRide = function(citizen, place, iteration, numberOf
     coordinatesOfRoute.getAllCoordinates()[ parseInt(coordinatesOfRoute.getAllCoordinates().length * 0.5) ][0]]
     
     /* ------------------- call createAndAddSimulationRideDurationFeature(coordinates)^^ instead ---------------------- */
-    this.map.createAndAddSimulationRideDurationFeature(iteration, middlePointOfPath);
+    this.map.createAndAddSimulationRideDurationFeature(ride.id, middlePointOfPath, totalRideDurationParsed);
     // layers.ridesDuration.push()
     /* ------------------- ---------------------- ---------------------- ---------------------- --------------------- */          
 
@@ -334,7 +339,7 @@ Simulation.prototype.simulateRide = function(citizen, place, iteration, numberOf
       let totalPathDistance = turf.lineDistance(pathToVehicle);
       let getNewPoint = turf.along(pathToVehicle, totalPathDistance / 100 * sublegsOfFirstLeg);
       /* ------------------- call updateMarkerCoordinates(markerTpe, id, newCoordinates) instead ---------------------- */
-      this.map.updateMarkerCoordinates('citizens', this.citizen.id, getNewPoint.geometry.coordinates);
+      this.map.updateMarkerCoordinates('citizens', citizen.id, getNewPoint.geometry.coordinates);
       /*let citizenMarkers = layers.simulationMarkers[1].getGeoJSON();
       citizenMarkers.features.filter(feature => feature.properties.id === citizen.id)[0].geometry.coordinates = getNewPoint.geometry.coordinates;
       layers.simulationMarkers[1].setGeoJSON(citizenMarkers).addTo(map);*/
@@ -372,14 +377,15 @@ Simulation.prototype.simulateRide = function(citizen, place, iteration, numberOf
 
     // const currentRideDurationIndex = layers.ridesDuration.length - 1;
 
-    map.addLayer(layers.ridesDuration[currentRideDurationIndex]);
+    //this.map.addLayer(layers.ridesDuration[currentRideDurationIndex]);
     this.runningIntervalsAndTimeouts.rideEnd.push(setTimeout(() => {
       console.log('>>>>>>> RIDE CONCLUDED')
       console.log('======================')
       console.log('Citizen moved from ', citizen.location, ' to ', citizen.destination);
       console.log('Nearest vehicle founded at ', nearestVehicle.location);
       console.log('======================')
-      this.rides.push(new Ride(this.id, _.cloneDeep(citizen), _.cloneDeep(nearestVehicle), _.cloneDeep(place), _.cloneDeep(duration)));
+      ride.setDuration(_.cloneDeep(duration))
+      this.rides.push(ride);
       citizen.destination = null;
       citizen.location = place.location;
       nearestVehicle.location = place.location;
@@ -395,7 +401,7 @@ Simulation.prototype.simulateRide = function(citizen, place, iteration, numberOf
       this.map.updateMarkerCoordinates('citizens', citizen.id, citizen.location.geometry.coordinates);      
      /* citizenMarkers.features.filter(feature => feature.properties.id === citizen.id)[0].geometry.coordinates = citizen.location.geometry.coordinates;
       layers.simulationMarkers[1].setGeoJSON(citizenMarkers).addTo(map);*/
-      this.map.reoveSimulationRideLayers(iteration);
+      this.map.removeSimulationRideLayers(ride.id);
       /*map.removeLayer(layers.ridesDuration[currentRideDurationIndex]);
       layers.simulationPaths[currentPathLayerIndex].clearLayers();*/
     }, duration.getTotalDuration() * 100)); // to speed up everything it's using seconds as milliseconds
